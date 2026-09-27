@@ -1,0 +1,71 @@
+### =========================================================================
+### Environment Configuration Variables
+### =========================================================================
+@baseUrl = https://ticket-backend-ufx5.onrender.com/api
+# @baseUrl =  http://localhost:5000/api
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYXRpb25hbElkIjozMDQxMTQ3MTYsInVzZXJFbWFpbCI6ImFudGhvbnltYWluYTEwMTFAZ21haWwuY29tIiwicm9sZSI6ImFkbWluIiwiZmlyc3ROYW1lIjoibWFkb2xsYXIiLCJleHAiOjE3ODQ3MDczMzcsImlhdCI6MTc3OTUyMzMzN30.8lBx0MW4c_C3IZoito1AcgYtRf4gMOrG01C07JexOOw
+@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYXRpb25hbElkIjo0MDU1NDg2OTYsInVzZXJFbWFpbCI6ImNvZGV3aXRoZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoidXNlciIsImZpcnN0TmFtZSI6Ikdha2VueWUiLCJleHAiOjE3OTA3MjIzNzYsImlhdCI6MTc4NTUzODM3Nn0.hfKRl-4ZcNt2PqxThUv2DVFw-BdFMBEhhcxQ8zh2ZQo
+@sampleNationalId = 405548696
+@sampleEventId = 31
+@sampleBookingId = 1050
+@sampleGeneratedToken = 53ac3261-400a-4e5a-a738-a7f50537b2a7
+
+### =========================================================================
+### 🛠️ 1. Direct Manual Ticket Issuance (Admin Only)
+### =========================================================================
+POST {{baseUrl}}/tickets/issue
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "bookingId": {{sampleBookingId}},
+  "eventId": {{sampleEventId}},
+  "nationalId": {{sampleNationalId}},
+  "quantity": 2
+}
+
+### =========================================================================
+### 📱 2. In-App Mobile Wallet Sync (Any Authenticated User)
+### =========================================================================
+GET {{baseUrl}}/tickets/my-passes/{{sampleNationalId}}
+Authorization: Bearer {{userToken}}
+
+### =========================================================================
+### 🎟️ 3. Gate Validation Scanner - Clean Initial Entry (Admin Only)
+### =========================================================================
+POST {{baseUrl}}/tickets/verify
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "ticketToken": "{{sampleGeneratedToken}}"
+}
+
+### =========================================================================
+### ⚠️ 4. Gate Validation Scanner - Double-Entry Guard Test (Admin Only)
+### =========================================================================
+POST {{baseUrl}}/tickets/verify
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "ticketToken": "{{sampleGeneratedToken}}"
+}
+
+### =========================================================================
+### ❌ 5. Malformed Request Validation Test
+### =========================================================================
+POST {{baseUrl}}/tickets/verify
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "ticketToken": ""
+}
+
+### =========================================================================
+### 📊 6. Event Statistics / Gate Progress Monitor (Admin Only)
+### =========================================================================
+# Verifies the count of scanned/unscanned tickets and the percentage completion.
+GET {{baseUrl}}/tickets/stats/{{sampleEventId}}
+Authorization: Bearer {{adminToken}}

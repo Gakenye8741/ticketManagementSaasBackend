@@ -1,0 +1,147 @@
+@baseUrl = http://localhost:5000/api/organizations
+@orgId = 1
+@digitalId = 1
+@memberId = 1
+@slug = tech-fest-2026
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjczNjIxMzY4OCwiZGlnaXRhbElkIjo3MzYyMTM2ODgsImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbml6ZXIiLCJpYXQiOjE3OTAwMTkyNTEsImV4cCI6MTc5NTIwMzI1MX0.GIMYgSKea5MvBQe4OyArKbcx6AWbGvIlXLq25-q-aHs
+
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjk0MTI4MTY4MiwiZGlnaXRhbElkIjo5NDEyODE2ODIsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE5MTQxLCJleHAiOjE3OTUyMDMxNDF9.zaXNCCow0oikIMj9qNZK0GD2XKrvSo4us-3yyb2EwyQ
+
+### ==========================================
+### 🏢 ORGANIZATION ENDPOINTS (Cookie Auth)
+### ==========================================
+
+### 1. Create Organization (Protected: Admin or Organizer)
+POST {{baseUrl}}
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "name": "Tech Fest Kenya",
+  "slug": "tech-fest-2026",
+  "supportEmail": "support@techfest.co.ke",
+  "supportPhone": "+254712345678",
+  "logoUrl": "https://example.com/logo.png",
+  "payoutPhone": "+254712345678",
+  "payoutType": "mpesa_phone",
+  "commissionPercentage": "5.00"
+}
+
+### 2. List Active Organizations (Public)
+GET {{baseUrl}}/active
+
+### 3. Admin: Get All Organizations (Protected: Admin Only)
+GET {{baseUrl}}/admin/all
+Cookie: token={{adminToken}}
+
+### 4. Search Organizations by Query (Public)
+GET {{baseUrl}}/search?q=Te
+### 5. Get Organization by URL Slug (Public)
+GET {{baseUrl}}/slug/{{slug}}
+
+### 6. Get Organization Summary Dashboard Stats (Protected)
+GET {{baseUrl}}/{{orgId}}/stats
+Cookie: token={{token}}
+
+### 7. Get Total Active Members Count in an Organization (Protected)
+GET {{baseUrl}}/{{orgId}}/members/count
+Cookie: token={{token}}
+
+### 8. Get All Members for an Organization (Protected)
+GET {{baseUrl}}/{{orgId}}/members
+Cookie: token={{token}}
+
+### 9. Check Member Mapping by User Digital ID and Org ID (Protected)
+GET {{baseUrl}}/{{orgId}}/members/user/{{digitalId}}
+Cookie: token={{token}}
+
+### 10. Get Organization with Full Relations (Protected)
+GET {{baseUrl}}/{{orgId}}/relations
+Cookie: token={{token}}
+
+### 11. Get Organization by ID (Public Profile)
+GET {{baseUrl}}/{{orgId}}
+
+### 12. Update Organization Profile Details (Protected)
+PUT {{baseUrl}}/{{orgId}}
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "name": "Tech Fest Africa Updated",
+  "supportEmail": "contact@techfest.co.ke"
+}
+
+### 13. Update Payout Configuration (Protected)
+PUT {{baseUrl}}/{{orgId}}/payout
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "payoutPhone": "+254798765432",
+  "payoutType": "paybill"
+}
+
+### 14. Admin: Update Organization Commission Percentage (Protected: Admin Only)
+PATCH {{baseUrl}}/{{orgId}}/commission
+Content-Type: application/json
+Cookie: token={{adminToken}}
+
+{
+  "commissionPercentage": "7.50"
+}
+
+### 15. Admin: Verify or Unverify Organization Badge (Protected: Admin Only)
+PATCH {{baseUrl}}/{{orgId}}/verify
+Content-Type: application/json
+Cookie: token={{adminToken}}
+
+{
+  "isVerified": true
+}
+
+### 16. Admin: Toggle Organization Active/Suspended Status (Protected: Admin Only)
+PATCH {{baseUrl}}/{{orgId}}/status
+Content-Type: application/json
+Cookie: token={{adminToken}}
+
+{
+  "isActive": true
+}
+
+### 17. Delete Organization (Protected: Admin Only)
+DELETE {{baseUrl}}/{{orgId}}
+Cookie: token={{token}}
+
+
+### ==========================================
+### 👤 ORGANIZATION MEMBER & ROLE ENDPOINTS
+### ==========================================
+
+### 18. Get All Organizations a Specific User Belongs To (Protected)
+GET {{baseUrl}}/user/{{digitalId}}
+Cookie: token={{token}}
+
+### 19. Add a Member to an Organization (Protected)
+POST {{baseUrl}}/members
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "orgId": 1,
+  "digitalId": 1,
+  "orgRole": "scanner"
+}
+
+### 20. Update Organization Member Role (Protected)
+PATCH {{baseUrl}}/members/{{memberId}}/role
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "orgRole": "admin"
+}
+
+### 21. Remove Member from Organization (Protected)
+DELETE {{baseUrl}}/members/{{memberId}}
+Cookie: token={{token}}

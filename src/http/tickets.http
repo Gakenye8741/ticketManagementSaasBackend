@@ -1,0 +1,150 @@
+@baseUrl = http://localhost:5000
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc0ODk2ODEzNiwiZGlnaXRhbElkIjo3NDg5NjgxMzYsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IlByb2dyYW1tZXIiLCJpYXQiOjE3ODk4MzA1MjEsImV4cCI6MTc5NTAxNDUyMX0.uB7tmlEY5ApxmgTPcOVLo6uuzoJ_PjOV6y8mzOthwzA
+
+@bookingId = 37
+@ticketId = 5
+@tokenUuid = TKT-A8538646680553D39E11736163B7CDA0
+@bundleUuid = BUNDLE-75b4b149-f756-4809-9e7a-304da65a6f9c
+@digitalId = 1
+@eventId = 1
+
+### ==========================================
+### 🎫 FULL TICKET ROUTES TEST SUITE
+### ==========================================
+
+### 1. Generate Tickets for a Booking
+POST {{baseUrl}}/api/tickets/booking/{{bookingId}}/generate
+Content-Type: application/json
+Cookie: token={{token}}
+
+### 2. Get Ticket by ID
+GET {{baseUrl}}/api/tickets/{{ticketId}}
+Cookie: token={{token}}
+
+### 3. Get Ticket by Token
+GET {{baseUrl}}/api/tickets/token/{{tokenUuid}}
+Cookie: token={{token}}
+
+### 4. Get Tickets by Booking ID
+GET {{baseUrl}}/api/tickets/booking/{{bookingId}}
+Cookie: token={{token}}
+
+### 5. Get Tickets by Event ID
+GET {{baseUrl}}/api/tickets/event/1
+Cookie: token={{token}}
+
+### 6. Get Tickets by Holder ID
+GET {{baseUrl}}/api/tickets/holder/{{digitalId}}
+Cookie: token={{token}}
+
+### 7. Get Tickets by Purchaser ID
+GET {{baseUrl}}/api/tickets/purchaser/{{digitalId}}
+Cookie: token={{token}}
+
+### 8. Assign Ticket to an Attendee
+PATCH {{baseUrl}}/api/tickets/{{ticketId}}/assign
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "attendeePhone": "+254712345678",
+  "holderId": 2
+}
+
+### 9. Bulk Assign Bundle Tickets
+PATCH {{baseUrl}}/api/tickets/bundle/assign-bulk
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "groupBundleId": "{{bundleUuid}}",
+  "assignments": [
+    {
+      "ticketId": {{ticketId}},
+      "attendeeName": "Attendee One",
+      "attendeeEmail": "one@example.com",
+      "attendeePhone": "+254711111111",
+      "holderId": 2
+    }
+  ]
+}
+
+### 10. Initiate Ticket Transfer
+POST {{baseUrl}}/api/tickets/transfer/initiate
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "ticketId": {{ticketId}},
+  "holderId": 2
+}
+
+### 11. Claim Transferred Ticket
+POST {{baseUrl}}/api/tickets/transfer/claim
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "claimToken": "transfer-token-xyz",
+  "newHolderDigitalId": 3,
+  "attendeeInfo": {
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "phone": "+254722222222"
+  }
+}
+
+### 12. Scan Ticket at Gate
+POST {{baseUrl}}/api/tickets/scan
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "ticketToken": "{{tokenUuid}}"
+}
+
+### 13. Unassign Ticket
+PATCH {{baseUrl}}/api/tickets/{{ticketId}}/unassign
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "ticketId": {{ticketId}},
+  "ownerId": {{digitalId}}
+}
+
+### 14. Get Tickets by Bundle ID
+GET {{baseUrl}}/api/tickets/bundle/{{bundleUuid}}
+Cookie: token={{token}}
+
+### 15. Count Total Tickets for Event
+GET {{baseUrl}}/api/tickets/event/{{eventId}}/count
+Cookie: token={{token}}
+
+### 16. Count Scanned Attendees for Event
+GET {{baseUrl}}/api/tickets/event/{{eventId}}/scanned-count
+Cookie: token={{token}}
+
+### 17. Update Ticket Holder
+PATCH {{baseUrl}}/api/tickets/holder/update
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "ticketId": {{ticketId}},
+  "newDigitalId": 4
+}
+
+### 18. Reset Ticket Scan
+PATCH {{baseUrl}}/api/tickets/{{ticketId}}/reset-scan
+Cookie: token={{token}}
+
+### 19. Get Unassigned User Tickets
+GET {{baseUrl}}/api/tickets/holder/{{digitalId}}/unassigned
+Cookie: token={{token}}
+
+### 20. Delete Ticket Record
+DELETE {{baseUrl}}/api/tickets/{{ticketId}}
+Cookie: token={{token}}

@@ -1,0 +1,201 @@
+@baseUrl = http://localhost:5000/api
+# Replace with your actual JWT token or auth_token cookie value
+@orgId = 1
+@digitalId = 1
+@memberId = 1
+@slug = tech-fest-2026
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjcwNjY4OTkzNCwiZGlnaXRhbElkIjo3MDY2ODk5MzQsImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbmFpemVyIiwiaWF0IjoxNzg5NjY2ODQ5LCJleHAiOjE3OTQ4NTA4NDl9.-yp4tjsVBFPwuqfqGW6_XnQ13YJb3-l5LJd9r3-ZaRQ
+
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc0ODk2ODEzNiwiZGlnaXRhbElkIjo3NDg5NjgxMzYsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IlByb2dyYW1tZXIiLCJpYXQiOjE3ODk2NjcyMzgsImV4cCI6MTc5NDg1MTIzOH0.zeczzd47xlL2kfNz0kpAD6sEhsP77fRDXDZ82uiqDfg
+
+### ==========================================
+### 1. WALLET ENDPOINTS
+### ==========================================
+
+### Get or Create Wallet
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+Cookie: token = {{token}}
+
+{
+  "orgId": 1,
+  "currency": "KES"
+}
+
+### Get Wallet by Organization ID
+GET {{baseUrl}}/wallets/{{orgId}}
+Cookie: token = {{token}}
+
+### Credit Wallet (Admin)
+POST {{baseUrl}}/wallets/credit
+Content-Type: application/json
+Cookie: token = {{adminToken}}
+
+{
+  "orgId": 1,
+  "amount": 5000.00
+}
+
+### Debit Wallet (Admin)
+POST {{baseUrl}}/wallets/debit
+Content-Type: application/json
+Cookie: token = {{adminToken}}
+
+{
+  "orgId": 1,
+  "amount": 1000.00
+}
+
+### Get Wallet Stats
+GET {{baseUrl}}/wallets/1/stats
+Cookie: token = {{token}}
+
+### Get Wallet Overview
+GET {{baseUrl}}/wallets/{{orgId}}/overview
+Cookie: token = {{token}}
+
+### Check Wallet Existence
+GET {{baseUrl}}/wallets/{{orgId}}/exists
+Cookie: token = {{token}}
+
+### Check Sufficient Balance
+GET {{baseUrl}}/wallets/{{orgId}}/balance-check?amount=700
+Cookie: token = {{token}}
+
+### Clear Pending Balance (Admin)
+POST {{baseUrl}}/wallets/{{orgId}}/clear-pending
+Cookie: token = {{adminToken}}
+
+### Reset Wallet (Admin)
+POST {{baseUrl}}/wallets/{{orgId}}/reset
+Cookie: token = {{adminToken}}
+
+### Get Total Platform Pending Liability (Admin)
+GET {{baseUrl}}/platform/pending-liability
+Cookie: token = {{adminToken}}
+
+
+### ==========================================
+### 2. PAYOUT ENDPOINTS
+### ==========================================
+
+### Request Payout
+POST {{baseUrl}}/payouts
+Content-Type: application/json
+Cookie: token = {{token}}
+
+{
+  "orgId": 1,
+  "amount": 2500.00,
+  "payoutMethodId": 1
+}
+
+### Get Pending Payouts (Admin)
+GET {{baseUrl}}/payouts/pending
+Cookie: token = {{adminToken}}
+
+### Bulk Update Payout Status (Admin)
+PATCH {{baseUrl}}/payouts/bulk-status
+Content-Type: application/json
+Cookie: token = {{adminToken}}
+
+{
+  "payoutIds": [1, 2],
+  "status": "Completed"
+}
+
+### Get Organization Payouts
+GET {{baseUrl}}/payouts/org/1
+Cookie: token = {{token}}
+
+### Get Latest Payout for Organization
+GET {{baseUrl}}/payouts/org/1/latest
+Cookie: token = {{token}}
+
+### Get Payout Count
+GET {{baseUrl}}/payouts/org/1/count
+Cookie: token = {{token}}
+
+### Get Total Paid Out Amount
+GET {{baseUrl}}/payouts/org/1/total-paid
+Cookie: token = {{token}}
+
+### Get Payouts by Status (Pending / Completed / Failed)
+GET {{baseUrl}}/payouts/org/1/status/Completed
+Cookie: token = {{token}}
+
+### Get Payout by ID
+GET {{baseUrl}}/payouts/1
+Cookie: token = {{token}}
+
+### Update Payout Status (Admin)
+PATCH {{baseUrl}}/payouts/1/status
+Content-Type: application/json
+Cookie: token = {{adminToken}}
+
+{
+  "status": "Completed",
+  "transactionReference": "MPESA_TXN_987654321"
+}
+
+
+### ==========================================
+### 3. PAYOUT METHODS ENDPOINTS
+### ==========================================
+
+### Add Payout Method
+POST {{baseUrl}}/payout-methods
+Content-Type: application/json
+Cookie: token = {{token}}
+
+{
+  "orgId": 1,
+  "accountType": "M-Pesa",
+  "accountNumber": "254712345678",
+  "accountName": "Gakenye Ndiritu",
+  "isDefault": true
+}
+
+### Get Organization Payout Methods
+GET {{baseUrl}}/payout-methods/org/1
+Cookie: token = {{token}}
+
+### Get Default Payout Method
+GET {{baseUrl}}/payout-methods/org/1/default
+Cookie: token = {{token}}
+
+### Count Payout Methods
+GET {{baseUrl}}/payout-methods/org/1/count
+Cookie: token = {{token}}
+
+### Get Payout Method by ID
+GET {{baseUrl}}/payout-methods/1
+Cookie: token = {{token}}
+
+### Set Default Payout Method
+PATCH {{baseUrl}}/payout-methods/1/default
+Content-Type: application/json
+Cookie: token = {{token}}
+
+{
+  "orgId": 1
+}
+
+### Update Payout Method
+PATCH {{baseUrl}}/payout-methods/1
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "orgId": 1,
+  "accountNumber": "254798765432"
+}
+
+
+### Delete Payout Method
+DELETE {{baseUrl}}/payout-methods/1?orgId=1
+Cookie: token = {{token}}
+
+### Validate Payout Method Ownership
+GET {{baseUrl}}/payout-methods/1/validate/1
+Cookie: token = {{token}}

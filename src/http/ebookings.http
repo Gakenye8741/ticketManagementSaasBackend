@@ -1,0 +1,222 @@
+@baseUrl = http://localhost:5000/api
+@eventId = 1
+@slug = nairobi-tech1-summit-2026-8798
+@bookingId = 2
+@orgId = 1
+@digitalId = 1
+@category = technology
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQ2Nzk3MTIwMCwiZGlnaXRhbElkIjo0Njc5NzEyMDAsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE2MjE5LCJleHAiOjE3OTUyMDAyMTl9.6k9lqOvTF_o8J06SR7_F9JbnEnobxuj7mQnSVEa3zMU
+
+### ==========================================
+### 📅 PUBLIC EVENT ENDPOINTS
+### ==========================================
+
+### 1. Get All Events Catalog
+GET {{baseUrl}}/events
+
+### 2. Get Upcoming Events Feed
+GET {{baseUrl}}/events/upcoming
+
+### 3. Search Events by Title Query
+GET {{baseUrl}}/events/search/title?title=nai
+
+### 4. Get Events by Category
+GET {{baseUrl}}/events/category/{{category}}
+
+### 5. Get Events by Organization ID
+GET {{baseUrl}}/events/organization/{{orgId}}
+
+### 6. Get Events by User Digital ID (Protected)
+GET {{baseUrl}}/events/user/{{digitalId}}
+Cookie: token={{token}}
+
+### 7. Get Single Event by ID
+GET {{baseUrl}}/events/{{eventId}}
+
+### 8. Get Single Event by Slug
+GET {{baseUrl}}/events/{{slug}}
+
+
+### ==========================================
+### 🔐 PROTECTED EVENT MANAGEMENT ENDPOINTS
+### ==========================================
+
+### 9. Create a New Event (Admin or Organizer)
+POST {{baseUrl}}/events
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "title": "Nairobi Tech1 Summit 2026",
+  "slug": "nairobi-tech1-summit-2026",
+  "description": "Annual gathering of software engineers, founders, and tech enthusiasts.",
+  "category": "technology",
+  "date": "2026-11-15",
+  "time": "09:00",
+  "venueId": 1,
+  "orgId": 1,
+  "bannerUrl": "https://example.com/banner.png",
+  "isFeatured": true
+}
+
+### 9.1 Create a Music Concert Event
+POST {{baseUrl}}/events
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "title": "Amapiano Night Live 2026",
+  "slug": "amapiano-night-live-2026",
+  "description": "Experience the biggest DJs and live performances under the stars.",
+  "category": "music",
+  "date": "2026-12-20",
+  "time": "19:30",
+  "venueId": 1,
+  "orgId": 1,
+  "bannerUrl": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=2000&auto=format&fit=crop",
+  "isFeatured": true
+}
+
+### 9.2 Create a Food and Drink Festival
+POST {{baseUrl}}/events
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "title": "Nairobi Street Food Festival",
+  "slug": "nairobi-street-food-festival-2026",
+  "description": "A celebration of diverse culinary cultures, craft beers, and gourmet bites.",
+  "category": "food_drink",
+  "date": "2026-10-10",
+  "time": "11:00",
+  "venueId": 1,
+  "orgId": 1,
+  "bannerUrl": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=2000&auto=format&fit=crop",
+  "isFeatured": false
+}
+
+### 9.3 Create a Business Conference
+POST {{baseUrl}}/events
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "title": "East Africa Startup Founders Summit",
+  "slug": "east-africa-startup-founders-summit-2026",
+  "description": "Keynotes, panel discussions, and pitch competitions for venture-backed founders.",
+  "category": "conference",
+  "date": "2026-11-28",
+  "time": "08:30",
+  "venueId": 1,
+  "orgId": 1,
+  "bannerUrl": "https://images.unsplash.com/photo-1515187029135-18ee286d815b?q=80&w=2000&auto=format&fit=crop",
+  "isFeatured": true
+}
+
+### 10. Update Event Details (Admin or Organizer)
+PUT {{baseUrl}}/events/{{eventId}}
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "title": "Nairobi Tech Summit 2026 (Updated)",
+  "description": "Expanded venue and track sessions added."
+}
+
+### 11. Update Event Status (Admin or Organizer)
+PATCH {{baseUrl}}/events/{{eventId}}/status
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "status": "in_progress"
+}
+
+### 12. Delete an Event (Admin Only)
+DELETE {{baseUrl}}/events/{{eventId}}
+Cookie: token={{token}}
+
+
+### ==========================================
+### 🎫 BOOKING & TICKET ENDPOINTS
+### ==========================================
+
+### 13. Get All Bookings (Admin or Organizer)
+GET {{baseUrl}}/bookings
+Cookie: token={{token}}
+
+### 14. Get Recent Bookings Feed (Admin or Organizer)
+GET {{baseUrl}}/bookings/recent
+Cookie: token={{token}}
+
+### 15. Get Bookings by User Digital ID (Protected)
+GET {{baseUrl}}/bookings/user/{{digitalId}}
+Cookie: token={{token}}
+
+### 16. Get Bookings by Event ID (Admin or Organizer)
+GET {{baseUrl}}/bookings/event/{{eventId}}
+Cookie: token={{token}}
+
+### 17. Get Event Booking Statistics & Revenue Overview (Admin or Organizer)
+GET {{baseUrl}}/bookings/event/{{eventId}}/stats
+Cookie: token={{token}}
+
+### 18. Get Single Booking by ID (Protected)
+GET {{baseUrl}}/bookings/{{bookingId}}
+Cookie: token={{token}}
+
+
+### 1. Create Guest Booking (No Login Required / Frictionless M-Pesa / Card Checkout)
+POST http://localhost:5000/api/bookings
+Content-Type: application/json
+
+{
+  "eventId": 3,
+  "ticketTypeId":  49,
+  "quantity": 2,
+  "guestName": "Brian Gakenye",
+  "guestEmail": "gakenye@example.com",
+  "guestPhone": "254112310754",
+  "idempotencyKey": "unique-bookingS-key-002"
+}
+
+### 2. Create User Booking (Logged-in with Digital ID session)
+POST http://localhost:5000/api/bookings
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "eventId": 3,
+  "ticketTypeId": 49,
+  "quantity": 1,
+  "digitalId": 1,
+  "idempotencyKey": "unique-booking-key-002"
+}
+### 18. Create a New Ticket Booking / Checkout
+POST {{baseUrl}}/bookings
+Content-Type: application/json
+
+{
+  "eventId": 2,
+  "ticketTypeName": "VIP Pass",
+  "quantity": 2,
+  "unitPrice": 2500.00,
+  "digitalId": 1,
+  "guestName": "Jane Doe",
+  "guestEmail": "jane.doe@example.com",
+  "guestPhone": "+254712345678",
+  "idempotencyKey": "unique-checkout-txn-uuid-001"
+}
+
+### 19. Update Booking Status (Admin or Organizer)
+PATCH {{baseUrl}}/bookings/47/status
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "bookingStatus": "Confirmed"
+}
+
+### 20. Cancel a Booking
+PATCH {{baseUrl}}/bookings/{{bookingId}}/cancel
+Cookie: token={{token}}

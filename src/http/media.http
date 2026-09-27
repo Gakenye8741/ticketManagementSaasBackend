@@ -1,0 +1,130 @@
+@baseUrl = http://localhost:5000/api/media
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQ2Nzk3MTIwMCwiZGlnaXRhbElkIjo0Njc5NzEyMDAsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE2MjE5LCJleHAiOjE3OTUyMDAyMTl9.6k9lqOvTF_o8J06SR7_F9JbnEnobxuj7mQnSVEa3zMU
+
+@eventId = 1
+@mediaId = 1
+
+### 1. Create a Single Media Record
+POST {{baseUrl}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "eventId": 1,
+  "url": "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1200&q=80",
+  "type": "image",
+  "altText": "Event Main Conference Banner",
+  "isPrimary": true
+}
+
+### 2. Bulk Create Media Items
+POST {{baseUrl}}/bulk
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "items": [
+    {
+      "eventId": 1,
+      "url": "https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=800&q=80",
+      "type": "image",
+      "altText": "Attendees networking at the gallery session",
+      "isPrimary": false
+    },
+    {
+      "eventId": 1,
+      "url": "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=800&q=80",
+      "type": "image",
+      "altText": "Official event concert poster",
+      "isPrimary": false
+    }
+  ]
+}
+
+### 3. Clone Event Media
+POST {{baseUrl}}/clone
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "sourceEventId": 1,
+  "targetEventId": 5
+}
+
+### 4. Batch Update Alt Text
+PATCH {{baseUrl}}/alt-text/batch
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "updates": [
+    {
+      "mediaId": 8,
+      "altText": "Updated Event Main Conference Banner"
+    }
+  ]
+}
+
+### 5. Set Media as Primary
+PATCH {{baseUrl}}/11/primary
+Authorization: Bearer {{token}}
+
+### 6. Update Media Metadata
+PATCH {{baseUrl}}/{{mediaId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "altText": "Modified alt text description with Unsplash asset",
+  "isPrimary": false
+}
+
+### 7. Delete Single Media Record
+DELETE {{baseUrl}}/{{mediaId}}
+Authorization: Bearer {{token}}
+
+### 8. Bulk Delete Media Items
+DELETE {{baseUrl}}/bulk/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "mediaIds": [1, 2]
+}
+
+### 9. Get All Media Paginated (Admin)
+GET {{baseUrl}}/admin/all?limit=20&offset=0
+Authorization: Bearer {{token}}
+
+### 10. Get Recent Media
+GET {{baseUrl}}/recent?limit=10
+Authorization: Bearer {{token}}
+
+### 11. Search Media by Alt Text
+GET {{baseUrl}}/search?q=Conference
+Authorization: Bearer {{token}}
+
+### 12. Get All Media for an Event
+GET {{baseUrl}}/event/{{eventId}}
+
+### 13. Get Primary Media for an Event
+GET {{baseUrl}}/event/{{eventId}}/primary
+
+### 14. Get Media Filtered by Type ('image' | 'video' .)
+GET {{baseUrl}}/event/{{eventId}}/type?type=image
+
+### 15. Count Total Media for an Event
+GET {{baseUrl}}/event/{{eventId}}/count
+
+### 16. Get Event Media Stats (Grouped by Type)
+GET {{baseUrl}}/event/{{eventId}}/stats
+
+### 17. Delete All Media Attached to an Event
+DELETE {{baseUrl}}/event/{{eventId}}
+Authorization: Bearer {{token}}
+
+### 18. Verify if Media Belongs to an Event
+GET {{baseUrl}}/{{mediaId}}/verify/{{eventId}}
+
+### 19. Get Single Media Record by ID
+GET {{baseUrl}}/{{mediaId}}

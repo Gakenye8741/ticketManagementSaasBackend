@@ -1,0 +1,54 @@
+### ==========================================================
+### TICKETSTREAM AUTHENTICATION API REQUESTS
+### ==========================================================
+
+@baseUrl = http://localhost:5000/api/auth
+@adminEmail =  codewithgakenye@gmail.com
+@organizerEmail = programminggakenye@gmail.com
+### 1. Register User
+POST {{baseUrl}}/register
+Content-Type: application/json
+
+{
+  "firstName": "Organizer",
+  "lastName": "Gakenye",
+  "email": "{{organizerEmail}}",
+  "password": "Gakenye123#",
+  "contactPhone": "+254112310751",
+  "address": "Nyeri, Kenya",
+  "role": "organizer"
+}
+
+### 2. Verify Email (OTP)
+PUT {{baseUrl}}/verify-email
+Content-Type: application/json
+
+{
+  "email": "codingguru@gmail.com",
+  "otp": "214130"
+}
+
+### 3. Login User
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{organizerEmail}}",
+  "password": "Gakenye123#"
+}
+
+### 4. Request Password Reset
+POST {{baseUrl}}/password-reset
+Content-Type: application/json
+
+{
+  "email": "programminggakenye@gmail.com"
+}
+
+### 5. Update Password via Token (Matches router path /reset-password/:token)
+PUT {{baseUrl}}/reset-password/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjg2MDczOTEyMywiZGlnaXRhbElkIjo4NjA3MzkxMjMsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJ1c2VyIiwiZmlyc3ROYW1lIjoiUHJvZ3JhbW1lciIsImlhdCI6MTc4OTY0NjE0MCwiZXhwIjoxNzk0ODMwMTQwfQ.g8iwfyaHtrA4dBUPRZ_MUHgqzOt1g6l-45vFrHytSo0
+Content-Type: application/json
+
+{
+  "newPassword": "NewSecurePassword456!"
+}

@@ -1,0 +1,8 @@
+allowBuilds:
+  bcrypt: false
+  core-js: false
+  esbuild: false
+ignoredBuiltDependencies:
+  - bcrypt
+  - core-js
+  - esbuild

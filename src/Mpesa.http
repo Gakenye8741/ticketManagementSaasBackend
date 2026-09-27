@@ -1,0 +1,61 @@
+### Variables
+@baseUrl = http://localhost:5000/api/Mpesa
+@contentType = application/json
+
+### 1. TEST PAYMENT INITIATION (STK PUSH)
+# This simulates your React/Mobile App calling your backend
+# Replace the phone with your own to get a real prompt on your phone!
+POST {{baseUrl}}/stk-push
+Content-Type: {{contentType}}
+
+{
+    "phoneNumber": "254112310754",
+    "amount": 1,
+    "bookingId": 101,
+    "nationalId": 1234567823
+}
+
+
+### 2. TEST SUCCESS CALLBACK (MANUAL SIMULATION)
+# Use this to test your Drizzle update logic without spending money.
+# STEP 1: Run Request #1 above.
+# STEP 2: Copy the "checkoutRequestId" from the response.
+# STEP 3: Paste it into "CheckoutRequestID" below and send this request.
+POST {{baseUrl}}/callback
+Content-Type: {{contentType}}
+
+{
+    "Body": {
+        "stkCallback": {
+            "MerchantRequestID": "29115-3462721-1",
+            "CheckoutRequestID": "ws_CO_02042026212109", 
+            "ResultCode": 0,
+            "ResultDesc": "The service request is processed successfully.",
+            "CallbackMetadata": {
+                "Item": [
+                    { "Name": "Amount", "Value": 1.00 },
+                    { "Name": "MpesaReceiptNumber", "Value": "RDK291J9S" },
+                    { "Name": "TransactionDate", "Value": 20260402212109 },
+                    { "Name": "PhoneNumber", "Value": 254712345678 }
+                ]
+            }
+        }
+    }
+}
+
+
+### 3. TEST FAILED CALLBACK (USER CANCELLED)
+# Simulates a user hitting "Cancel" on the M-Pesa PIN prompt
+POST {{baseUrl}}/callback
+Content-Type: {{contentType}}
+
+{
+    "Body": {
+        "stkCallback": {
+            "MerchantRequestID": "29115-3462721-1",
+            "CheckoutRequestID": "ws_CO_02042026212109",
+            "ResultCode": 1032,
+            "ResultDesc": "Request cancelled by user."
+        }
+    }
+}

@@ -1,0 +1,82 @@
+@baseUrl = http://localhost:5000/api
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc0ODk2ODEzNiwiZGlnaXRhbElkIjo3NDg5NjgxMzYsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IlByb2dyYW1tZXIiLCJpYXQiOjE3ODk2Njc1MjksImV4cCI6MTc5NDg1MTUyOX0.fgeHzpfQkAJDasX6_ceJzbw6C5JlT0xqiSoENh7wnZ8
+@userId =  1
+### 0. Login (Use this to get your session cookie/token)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "codewithgakenye@gmail.com",
+  "password": "Gakenye123#"
+}
+
+### 1. Get all users (Admin only)
+GET {{baseUrl}}/users
+Cookie: token={{token}}
+
+### 2. Search users by last name (Admin only)
+GET {{baseUrl}}/users-search?lastName=gakenye
+Cookie: token={{token}}
+
+### 3. Search users with details by query (Admin only)
+GET {{baseUrl}}/details/users-search?q=gakenye
+Cookie: token={{token}}
+
+### 4. Get user by digital ID
+GET {{baseUrl}}/users/{{userId}}
+Cookie: token={{token}}
+
+### 5. Get full user details by digital ID
+GET {{baseUrl}}/users/{{userId}}/details
+Cookie: token={{token}}
+
+### 6. Create a new user (Public)
+POST {{baseUrl}}/users
+Content-Type: application/json
+
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "brayogakenye04@gmail.com",
+  "contactPhone": "+254712345678",
+  "password": "securepassword123",
+  "city": "Nairobi",
+  "country": "Kenya"
+}
+
+### 7. Broadcast email to registered users (Admin only)
+POST {{baseUrl}}/users/send-email
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "subject": "Important Update from TicketStream",
+  "message": "We have exciting new events coming up this season!",
+  "preheader": "Check out our latest platform updates"
+}
+
+### 8. Update user by digital ID
+PUT {{baseUrl}}/users/1
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "firstName": "Johnathan"
+}
+
+### 9. Update user by digital ID (Admin only)
+PUT {{baseUrl}}/admin/users/1
+Content-Type: application/json
+Cookie: token={{token}}
+
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john.doe@example.com",
+  "password": "newsecurepassword123",
+  "role": "user"
+}
+
+### 10. Delete user by digital ID (Admin only)
+DELETE {{baseUrl}}/users/1
+Cookie: token={{token}}

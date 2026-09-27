@@ -1,0 +1,125 @@
+@baseUrl = http://localhost:5000/api/payments
+@bookingId = 48
+@orgId = 1
+
+### ==========================================
+### 🚀 GATEWAY, HEALTH & WEBHOOK ROUTES
+### ==========================================
+
+### 1. Health Check
+GET {{baseUrl}}/health
+
+### 2. Check Booking Payment Status (Updated to /booking-status)
+GET {{baseUrl}}/booking-status/{{bookingId}}
+
+### 3. Initiate M-Pesa STK Push
+POST {{baseUrl}}/stk-push
+Content-Type: application/json
+
+{
+  "phoneNumber": "254112310754",
+  "bookingId": {{bookingId}}
+}
+
+### 4. Create Stripe Checkout Session
+POST {{baseUrl}}/stripe/create-checkout-session
+Content-Type: application/json
+
+{
+  "bookingId": 1,
+  "amount": 1000,
+  "eventName": "Tech Summit 2026",
+  "ticketTypeName": "Regular Advance",
+  "quantity": 1
+}
+
+
+### ==========================================
+### 📊 ANALYTICS & STATS ROUTES
+### ==========================================
+
+### 5. Get Platform Total Earnings
+GET {{baseUrl}}/analytics/platform-earnings
+
+### 6. Get Event Total Revenue
+GET {{baseUrl}}/analytics/event-revenue/1
+
+### 7. Get Successful Payments Count
+GET {{baseUrl}}/analytics/successful-count
+
+
+### ==========================================
+### 📋 CORE PAYMENT CRUD & FILTER ROUTES
+### ==========================================
+
+### 8. Get All Payments
+GET {{baseUrl}}
+
+### 9. Create Manual Payment Record
+POST {{baseUrl}}
+Content-Type: application/json
+
+{
+  "bookingId": {{bookingId}},
+  "amount": 10000.00,
+  "paymentMethod": "M-Pesa",
+  "paymentStatus": "Completed",
+  "transactionId": "QWE12345",
+  "orgId":{{orgId}}
+}
+
+### 9. Create Manual Payment Record (Auto-fetched from Booking)
+POST {{baseUrl}}
+Content-Type: application/json
+
+{
+  "bookingId": {{bookingId}},
+  "paymentMethod": "M-Pesa",
+  "paymentStatus": "Completed",
+  "transactionId": "QWE1234567453",
+  "orgId":{{orgId}}
+}
+
+### 10. Get Payment By ID
+GET {{baseUrl}}/1
+
+### 11. Update Payment Record
+PUT {{baseUrl}}/1
+Content-Type: application/json
+
+{
+  "amount": 1200.00,
+  "paymentMethod": "Stripe"
+}
+
+### 12. Update Payment Status (Patch)
+PATCH {{baseUrl}}/1/status
+Content-Type: application/json
+
+{
+  "paymentStatus": "Completed",
+  "transactionId": "MOCK_TXN_987654",
+  "resultCode": "0",
+  "resultDesc": "The service request is processed successfully."
+}
+
+### 13. Filter Payments by Booking ID
+GET {{baseUrl}}/booking/{{bookingId}}
+
+### 14. Filter Payments by Event ID
+GET {{baseUrl}}/event/1
+
+### 15. Filter Payments by Organization ID
+GET {{baseUrl}}/org/1
+
+### 16. Filter Payments by User Digital ID
+GET {{baseUrl}}/user/1
+
+### 17. Filter Payments by Status
+GET {{baseUrl}}/status/Pending
+
+### 18. Filter Payments by Method
+GET {{baseUrl}}/method/M-Pesa
+
+### 19. Delete Payment Record
+DELETE {{baseUrl}}/1

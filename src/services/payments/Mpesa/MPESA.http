@@ -1,0 +1,62 @@
+### Variables
+@baseUrl = http://localhost:5000/api
+@phoneNumber = 254112310754
+@bookingId = 68
+@amount = 1
+
+### 1. Initiate STK Push
+# This triggers the "Enter PIN" prompt on the phone number provided.
+# Ensure your server is running and your .env has valid M-Pesa credentials.
+POST {{baseUrl}}/mpesa/stk-push
+Content-Type: application/json
+
+{
+  "amount": {{amount}},
+  "phoneNumber": "{{phoneNumber}}",
+  "bookingId": {{bookingId}}
+}
+
+
+### 2. Mock M-Pesa Success Callback
+# Use this to test your 'mpesaCallbackHandler' logic locally.
+# This simulates Safaricom telling your server the payment was SUCCESSFUL.
+# Replace 'CheckoutRequestID' with the one returned from the STK Push above if testing full flow.
+POST {{baseUrl}}/mpesa-callback
+Content-Type: application/json
+
+{
+  "Body": {
+    "stkCallback": {
+      "MerchantRequestID": "29115-3462711-1",
+      "CheckoutRequestID": "ws_CO_02042026_TEST_123",
+      "ResultCode": 0,
+      "ResultDesc": "The service request is processed successfully.",
+      "CallbackMetadata": {
+        "Item": [
+          { "Name": "Amount", "Value": {{amount}} },
+          { "Name": "MpesaReceiptNumber", "Value": "RDK2X3P4Z5" },
+          { "Name": "TransactionDate", "Value": 20260402222528 },
+          { "Name": "PhoneNumber", "Value": {{phoneNumber}} }
+        ]
+      }
+    }
+  }
+}
+
+
+### 3. Mock M-Pesa Cancelled/Failed Callback
+# Use this to test how your server handles a user cancelling the transaction.
+# It should log the failure but NOT trigger a ticket email.
+POST {{baseUrl}}/mpesa-callback
+Content-Type: application/json
+
+{
+  "Body": {
+    "stkCallback": {
+      "MerchantRequestID": "29115-3462711-1",
+      "CheckoutRequestID": "ws_CO_02042026_TEST_123",
+      "ResultCode": 1032,
+      "ResultDesc": "Request cancelled by user."
+    }
+  }
+}
