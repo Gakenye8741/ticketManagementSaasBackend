@@ -58,8 +58,10 @@ app.use(helmet()); // Sets secure HTTP response headers
 app.use(compression()); // Gzip/Brotli compression for maximum transfer speed
 
 const allowedOrigins = [
-    "http://localhost:5173", 
+  "http://localhost:5173", 
   "https://ticketstream-events.netlify.app",
+  "https://ticketstream.gakenye-ndiritu.co.ke",
+  "https://www.ticketstream.gakenye-ndiritu.co.ke",
   "https://gakenye-ndiritu.co.ke",
   "https://www.gakenye-ndiritu.co.ke",
   ...(process.env.EXTRA_ALLOWED_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean) ?? []),
