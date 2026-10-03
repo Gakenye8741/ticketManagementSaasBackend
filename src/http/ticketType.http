@@ -1,10 +1,10 @@
-@baseUrl = http://localhost:5000/api
+@baseUrl = https://ticket-api.gakenye-ndiritu.co.ke/api
 @ticketTypeId = 42
-@eventId = 1
+@eventId = 3
 @sourceEventId = 3
 @targetEventId = 2
 
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjcwNjY4OTkzNCwiZGlnaXRhbElkIjo3MDY2ODk5MzQsImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbmFpemVyIiwiaWF0IjoxNzg5NjY2ODQ5LCJleHAiOjE3OTQ4NTA4NDl9.-yp4tjsVBFPwuqfqGW6_XnQ13YJb3-l5LJd9r3-ZaRQ
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc5NTcwMjk1OSwiZGlnaXRhbElkIjo3OTU3MDI5NTksImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbml6ZXIiLCJpYXQiOjE3OTA2MjI5ODgsImV4cCI6MTc5NTgwNjk4OH0.V6jgSFIpVz7aC9UdE8pjQClXTv72WCtjt17jfgxl7zk
 
 ### ==========================================
 ### 🎟️ PUBLIC / GENERAL READ ROUTES (Any Auth User)
@@ -61,7 +61,7 @@ Cookie: token={{token}}
 Content-Type: application/json
 
 {
-  "eventId": 1,
+  "eventId": {{eventId}},
   "name": "VIP Early Bird  1",
   "price": "1.00",
   "quantity": 150,
@@ -147,7 +147,7 @@ GET {{baseUrl}}/tickettypes/{{ticketTypeId}}/revenue
 Cookie: token={{token}}
 
 ### 20. Get Total Cumulative Event Ticket Revenue
-GET {{baseUrl}}/tickettypes/event/{{eventId}}/revenue
+GET {{baseUrl}}/tickettypes/event/1/revenue
 Cookie: token={{token}}
 
 ### 21. Get Comprehensive Event Inventory Summary Report

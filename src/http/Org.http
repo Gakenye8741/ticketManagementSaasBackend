@@ -1,11 +1,13 @@
 @baseUrl = http://localhost:5000/api/organizations
+# @baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api/organizations
 @orgId = 1
 @digitalId = 1
 @memberId = 1
 @slug = tech-fest-2026
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjczNjIxMzY4OCwiZGlnaXRhbElkIjo3MzYyMTM2ODgsImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbml6ZXIiLCJpYXQiOjE3OTAwMTkyNTEsImV4cCI6MTc5NTIwMzI1MX0.GIMYgSKea5MvBQe4OyArKbcx6AWbGvIlXLq25-q-aHs
+# @token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc5NTcwMjk1OSwiZGlnaXRhbElkIjo3OTU3MDI5NTksImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbml6ZXIiLCJpYXQiOjE3OTA2MjI5ODgsImV4cCI6MTc5NTgwNjk4OH0.V6jgSFIpVz7aC9UdE8pjQClXTv72WCtjt17jfgxl7zk
 
-@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjk0MTI4MTY4MiwiZGlnaXRhbElkIjo5NDEyODE2ODIsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE5MTQxLCJleHAiOjE3OTUyMDMxNDF9.zaXNCCow0oikIMj9qNZK0GD2XKrvSo4us-3yyb2EwyQ
+@token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjczNjIxMzY4OCwiZGlnaXRhbElkIjo3MzYyMTM2ODgsImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbml6ZXIiLCJpYXQiOjE3OTA2NTM2MzEsImV4cCI6MTc5NTgzNzYzMX0.Rclt2YD4iTRWGBtkoarLj7Z28zQD1j8CumCoXrmqQ4o
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjM4MzMxMDA1OSwiZGlnaXRhbElkIjozODMzMTAwNTksImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6ImFkbWluIiwiaWF0IjoxNzkwNjIzMDQ2LCJleHAiOjE3OTU4MDcwNDZ9.bu8-AlIYEQqNIDmNDRM_iNw8akMLOBbvI77XpMRzXK4
 
 ### ==========================================
 ### 🏢 ORGANIZATION ENDPOINTS (Cookie Auth)
@@ -17,12 +19,12 @@ Content-Type: application/json
 Cookie: token={{token}}
 
 {
-  "name": "Tech Fest Kenya",
-  "slug": "tech-fest-2026",
+  "name": "Tech Fest1 Kenya",
+  "slug": "tech-fest-2028",
   "supportEmail": "support@techfest.co.ke",
-  "supportPhone": "+254712345678",
+  "supportPhone": "+2547123456728",
   "logoUrl": "https://example.com/logo.png",
-  "payoutPhone": "+254712345678",
+  "payoutPhone": "+254712145679",
   "payoutType": "mpesa_phone",
   "commissionPercentage": "5.00"
 }

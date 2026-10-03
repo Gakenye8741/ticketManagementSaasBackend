@@ -1,7 +1,7 @@
-@baseUrl = http://localhost:5000/api/media
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQ2Nzk3MTIwMCwiZGlnaXRhbElkIjo0Njc5NzEyMDAsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE2MjE5LCJleHAiOjE3OTUyMDAyMTl9.6k9lqOvTF_o8J06SR7_F9JbnEnobxuj7mQnSVEa3zMU
+@baseUrl = https://ticket-api.gakenye-ndiritu.co.ke/api/media
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc5NTcwMjk1OSwiZGlnaXRhbElkIjo3OTU3MDI5NTksImVtYWlsIjoicHJvZ3JhbW1pbmdnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJPcmdhbml6ZXIiLCJpYXQiOjE3OTA2MjI5ODgsImV4cCI6MTc5NTgwNjk4OH0.V6jgSFIpVz7aC9UdE8pjQClXTv72WCtjt17jfgxl7zk
 
-@eventId = 1
+@eventId = 3
 @mediaId = 1
 
 ### 1. Create a Single Media Record
@@ -10,7 +10,7 @@ Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "eventId": 1,
+  "eventId": {{eventId}},
   "url": "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1200&q=80",
   "type": "image",
   "altText": "Event Main Conference Banner",
@@ -25,14 +25,14 @@ Authorization: Bearer {{token}}
 {
   "items": [
     {
-      "eventId": 1,
+      "eventId": {{eventId}},
       "url": "https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=800&q=80",
       "type": "image",
       "altText": "Attendees networking at the gallery session",
       "isPrimary": false
     },
     {
-      "eventId": 1,
+      "eventId": {{eventId}},
       "url": "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=800&q=80",
       "type": "image",
       "altText": "Official event concert poster",

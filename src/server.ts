@@ -29,20 +29,21 @@ import paymentRouter from './services/payments/payments.route';
 import TicketRouter from './services/tickets/ticket.route';
 import TicketTypeRouter from './services/TicketType/tickettype.route';
 
-
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const isProd = NODE_ENV === 'production';
 
 // Initialize structured logger for lightning-fast asynchronous logging
 const loggerInstance = pino({
-  level: NODE_ENV === 'production' ? 'info' : 'debug',
-  transport: NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined,
+  level: isProd ? 'info' : 'debug',
+  transport: !isProd ? { target: 'pino-pretty' } : undefined,
 });
 
 // Trust proxy if running behind Nginx / Cloudflare load balancer
+// (required so `secure` cookies work behind a TLS-terminating proxy)
 app.set('trust proxy', 1);
 
 // ==========================================
@@ -56,23 +57,24 @@ app.post("/api/payment/webhook", express.raw({ type: "application/json" }), webh
 app.use(helmet()); // Sets secure HTTP response headers
 app.use(compression()); // Gzip/Brotli compression for maximum transfer speed
 
-// High-performance CORS policy
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:4173",
+    "http://localhost:5173", 
   "https://ticketstream-events.netlify.app",
-  "https://gakenye-ndiritu.co.ke"
+  "https://gakenye-ndiritu.co.ke",
+  "https://www.gakenye-ndiritu.co.ke",
+  ...(process.env.EXTRA_ALLOWED_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean) ?? []),
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
+    // No origin = curl, Postman, REST Client (.http files), server-to-server
     if (!origin || allowedOrigins.includes(origin) || NODE_ENV === 'development') {
       callback(null, true);
     } else {
       callback(new Error('Blocked by CORS policy: Unauthorized Origin'));
     }
   },
-  credentials: true,
+  credentials: true, // lets the browser send/receive the HttpOnly `token` cookie
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
@@ -87,13 +89,31 @@ const globalLimiter = rateLimit({
 });
 app.use("/api/", globalLimiter);
 
-// Parse Cookies, JSON & URL-encoded payloads with strict sizing bounds
+// Parse Cookies (must run BEFORE any route/auth middleware), JSON & URL-encoded payloads
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // High-speed HTTP request logger
 app.use(pinoHttp({ logger: loggerInstance }));
+
+// Temporary auth debugging. Enable with DEBUG_AUTH=true, then remove when solved.
+// Shows whether the cookie actually reaches the server (never logs the token itself).
+if (process.env.DEBUG_AUTH === 'true') {
+  app.use('/api', (req: Request, _res: Response, next: NextFunction) => {
+    (req as any).log.info(
+      {
+        url: (req as any).originalUrl,
+        origin: (req as any).headers.origin,
+        hasCookieHeader: !!(req as any).headers.cookie,
+        hasTokenCookie: !!(req as any).cookies?.token,
+        hasAuthHeader: !!(req as any).headers.authorization,
+      },
+      'auth debug'
+    );
+    next();
+  });
+}
 
 // ==========================================
 // 3. HEALTH CHECK & SYSTEM STATUS
@@ -112,25 +132,29 @@ app.get('/', (_req: Request, res: Response) => {
 
 // ==========================================
 // 4. API ROUTE REGISTRATION (With Safety Guard)
+// ORDER MATTERS: specific prefixes first, generic '/api' mounts last.
+// A router mounted at '/api' that uses router-level auth (router.use(auth))
+// would otherwise intercept every request below it and reject it with
+// "Authentication token is missing" before the intended router is reached.
 // ==========================================
 const apiRoutes = [
+  // --- Specific prefixes first ---
   { path: '/api/auth', router: authRouter },
-  { path: '/api', router: userRouter },
+  { path: '/api/organizations', router: OrgRouter },
+  { path: '/api/media', router: mediaRouter },
   { path: '/api/tickets', router: TicketRouter },
   { path: '/api/tickettypes', router: TicketTypeRouter },
-  
+  { path: '/api/payments', router: paymentRouter },
+  { path: '/api/ticket', router: qrTicketRoutes },
+
+  // --- Generic '/api' mounts last (make sure these use per-route auth, not router.use(auth)) ---
+  { path: '/api', router: userRouter },
   { path: '/api', router: venueRoute },
   { path: '/api', router: eventRouter },
   { path: '/api', router: bookingRouter },
-  { path: '/api/payments', router: paymentRouter },
-  { path: '/api', router: TicketRouter },
-
-  { path: '/api/media', router: mediaRouter },
   { path: '/api', router: responseRoute },
   { path: '/api', router: sendTicketEmailRoute },
   { path: '/api', router: MpesaRoute },
-  { path: '/api/ticket', router: qrTicketRoutes },
-  { path: '/api/organizations', router: OrgRouter },
   { path: '/api', router: walletRouter },
 ];
 
@@ -145,10 +169,30 @@ apiRoutes.forEach(({ path, router }) => {
 // ==========================================
 // 5. CENTRALIZED ERROR-HANDLING MIDDLEWARE
 // ==========================================
+
+// 404 handler (must come after all routes)
 app.use((req: Request, res: Response, _next: NextFunction) => {
   (res as any).status(404).json({
     success: false,
     message: `Route not found: ${(req as any).method} ${(req as any).originalUrl}`
+  });
+});
+
+// Global error handler (4 arguments = Express treats it as an error handler).
+// Turns CORS rejections and unexpected throws into clean JSON instead of HTML stack traces.
+app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  const isCorsError = typeof err?.message === 'string' && err.message.startsWith('Blocked by CORS');
+  const status = isCorsError ? 403 : err?.status || err?.statusCode || 500;
+
+  (req as any).log?.error({ err }, 'Unhandled error');
+
+  (res as any).status(status).json({
+    success: false,
+    message: isCorsError
+      ? err.message
+      : isProd && status === 500
+        ? 'Internal server error'
+        : err?.message || 'Internal server error',
   });
 });
 

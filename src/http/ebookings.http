@@ -1,9 +1,10 @@
-@baseUrl = http://localhost:5000/api
+# @baseUrl = http://localhost:5000/api
+@baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api
 @eventId = 1
 @slug = nairobi-tech1-summit-2026-8798
 @bookingId = 2
 @orgId = 1
-@digitalId = 1
+@digitalId = 736213688
 @category = technology
 @token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQ2Nzk3MTIwMCwiZGlnaXRhbElkIjo0Njc5NzEyMDAsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE2MjE5LCJleHAiOjE3OTUyMDAyMTl9.6k9lqOvTF_o8J06SR7_F9JbnEnobxuj7mQnSVEa3zMU
 
@@ -83,7 +84,7 @@ Content-Type: application/json
 Cookie: token={{token}}
 
 {
-  "title": "Nairobi Street Food Festival",
+  "title": "Nairobi Street Food Festival 4",
   "slug": "nairobi-street-food-festival-2026",
   "description": "A celebration of diverse culinary cultures, craft beers, and gourmet bites.",
   "category": "food_drink",
@@ -91,8 +92,7 @@ Cookie: token={{token}}
   "time": "11:00",
   "venueId": 1,
   "orgId": 1,
-  "bannerUrl": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=2000&auto=format&fit=crop",
-  "isFeatured": false
+
 }
 
 ### 9.3 Create a Business Conference
@@ -133,7 +133,7 @@ Cookie: token={{token}}
 }
 
 ### 12. Delete an Event (Admin Only)
-DELETE {{baseUrl}}/events/{{eventId}}
+DELETE {{baseUrl}}/events/5
 Cookie: token={{token}}
 
 

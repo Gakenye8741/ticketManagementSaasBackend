@@ -44,7 +44,8 @@ export const authMiddleware = (
 ) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     // Extract token from HttpOnly cookie first, with fallback to Authorization header
-    const token = req.cookies?.token || req.header("Authorization")?.replace("Bearer ", "");
+  // ✅ Check for 'auth_token' first
+const token = req.cookies?.auth_token || req.cookies?.token || req.header("Authorization")?.replace("Bearer ", "");
 
     if (!token) {
       res.status(401).json({ success: false, message: "Authentication token is missing" });

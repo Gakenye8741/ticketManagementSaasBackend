@@ -18,6 +18,9 @@ import {
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { sendNotificationEmail } from "../middleware/googleMailer";
+import { eq } from "drizzle-orm";
+import { organizationMembers } from "../drizzle/schema";
+import db from "../drizzle/db";
 
 // Generate 6-digit code
 const generateConfirmationCode = () => Math.floor(100000 + Math.random() * 900000);
@@ -121,9 +124,18 @@ export const loginUser: RequestHandler = async (req, res) => {
       return;
     }
 
+    // Query the organizationMembers table to find the orgId linked to this user's digitalId
+    const membership = await db.query.organizationMembers.findFirst({
+      where: eq(organizationMembers.digitalId, userExists.digitalId),
+    });
+
+    // If they must belong to an organization to log in as an organizer:
+    const orgId = membership ? membership.orgId : null;
+
     const payload = {
       userId: userExists.digitalId,
       digitalId: userExists.digitalId,
+      orgId: orgId, // Attached to JWT token payload
       email: userExists.email,
       role: userExists.role,
       firstName: userExists.firstName,
@@ -136,12 +148,13 @@ export const loginUser: RequestHandler = async (req, res) => {
     res.cookie("auth_token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
       maxAge: 60 * 60 * 24 * 60 * 1000,
     });
 
     res.status(200).json({
       digitalId: userExists.digitalId,
+      orgId: orgId, // Passed to frontend Redux state
       email: userExists.email,
       role: userExists.role,
       firstName: userExists.firstName,

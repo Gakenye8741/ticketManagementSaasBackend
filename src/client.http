@@ -138,8 +138,8 @@ GET http://localhost:5000/api/users-search?lastName=u
 GET http://localhost:5000/api/tickets/2/details
 
 ###
-POST http://localhost:5000/api/venues
-Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQ2Nzk3MTIwMCwiZGlnaXRhbElkIjo0Njc5NzEyMDAsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE2MjE5LCJleHAiOjE3OTUyMDAyMTl9.6k9lqOvTF_o8J06SR7_F9JbnEnobxuj7mQnSVEa3zMU
+POST https://ticket-api.gakenye-ndiritu.co.ke/api/venues
+Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjM4MzMxMDA1OSwiZGlnaXRhbElkIjozODMzMTAwNTksImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6ImFkbWluIiwiaWF0IjoxNzkwNjIzMDQ2LCJleHAiOjE3OTU4MDcwNDZ9.bu8-AlIYEQqNIDmNDRM_iNw8akMLOBbvI77XpMRzXK4
 Content-Type:application/json
 
 {

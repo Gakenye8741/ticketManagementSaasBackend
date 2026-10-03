@@ -15,7 +15,6 @@
   },
   "keywords": [],
   "author": "Gakenye Ndiritu",
-  "packageManager": "pnpm@10.10.0",
   "license": "ISC",
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",
