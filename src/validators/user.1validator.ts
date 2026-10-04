@@ -25,6 +25,51 @@ export const insertUserSchema = z.object({
 
 export const updateUserSchema = insertUserSchema.partial();
 
+// ---------------------------------------------------------------------------
+// NEW: Self-service profile update
+// ---------------------------------------------------------------------------
+
+// Maps the frontend's `profile_picture` key to the DB field `profileImageUrl`
+const mapLegacyKeys = (body: unknown) => {
+  if (body && typeof body === "object" && "profile_picture" in body) {
+    const { profile_picture, ...rest } = body as Record<string, unknown>;
+    return { profileImageUrl: profile_picture, ...rest };
+  }
+  return body;
+};
+
+// What a normal user may change on their OWN profile
+// (no role, isActive, emailVerified, tokens, counters or password)
+export const updateProfileSchema = z.preprocess(
+  mapLegacyKeys,
+  insertUserSchema
+    .pick({
+      firstName: true,
+      lastName: true,
+      email: true,
+      contactPhone: true,
+      address: true,
+      city: true,
+      country: true,
+      profileImageUrl: true,
+    })
+    .partial()
+);
+
+// ---------------------------------------------------------------------------
+// NEW: Admin update
+// Can also change role, isActive, emailVerified and password,
+// but never the security tokens or counters.
+// ---------------------------------------------------------------------------
+export const updateAdminUserSchema = updateUserSchema.omit({
+  confirmationCode: true,
+  passwordResetToken: true,
+  passwordResetExpiresAt: true,
+  failedLoginAttempts: true,
+  lockedUntil: true,
+  lastLoginAt: true,
+});
+
 export const loginUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(1, "Password is required"),

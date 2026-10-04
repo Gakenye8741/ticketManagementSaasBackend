@@ -104,34 +104,36 @@ export const loginUser: RequestHandler = async (req, res) => {
       res.status(400).json({ error: "Invalid input", details: parseResult.error.issues });
       return;
     }
-
+ 
     const { email, password } = parseResult.data;
     const userExists = await getUserByEmailService(email);
-
+ 
     if (!userExists) {
       res.status(404).json({ error: "User does not exist" });
       return;
     }
-
+ 
     if (!userExists.emailVerified) {
       res.status(403).json({ error: "Please verify your email." });
       return;
     }
-
+ 
     const isMatch = bcrypt.compareSync(password, userExists.password!);
     if (!isMatch) {
       res.status(401).json({ error: "Invalid password" });
       return;
     }
-
+ 
     // Query the organizationMembers table to find the orgId linked to this user's digitalId
     const membership = await db.query.organizationMembers.findFirst({
       where: eq(organizationMembers.digitalId, userExists.digitalId),
     });
-
+ 
     // If they must belong to an organization to log in as an organizer:
     const orgId = membership ? membership.orgId : null;
-
+ 
+    // JWT payload: identity only. The profile image is NOT stored here because
+    // a token never changes after login, so the image would go stale after an upload.
     const payload = {
       userId: userExists.digitalId,
       digitalId: userExists.digitalId,
@@ -140,24 +142,26 @@ export const loginUser: RequestHandler = async (req, res) => {
       role: userExists.role,
       firstName: userExists.firstName,
     };
-
+ 
     const token = jwt.sign(payload, process.env.JWT_SECRET!, {
       expiresIn: "60d",
     });
-
+ 
     res.cookie("auth_token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
       maxAge: 60 * 60 * 24 * 60 * 1000,
     });
-
+ 
     res.status(200).json({
       digitalId: userExists.digitalId,
       orgId: orgId, // Passed to frontend Redux state
       email: userExists.email,
       role: userExists.role,
       firstName: userExists.firstName,
+      lastName: userExists.lastName, // new: used for avatar initials
+      profileImageUrl: userExists.profileImageUrl, // new: shown in the navbar on first render
       message: "Login successful 😎",
     });
   } catch (error: any) {

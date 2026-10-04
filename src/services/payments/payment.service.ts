@@ -6,7 +6,8 @@ import {
   TInsertPayment,
   TSelectPayment,
   paymentStatusEnum,
-  organizations
+  organizations,
+  wallets
 } from "../../drizzle/schema";
 
 // ==========================================
@@ -219,50 +220,81 @@ export const calculatePaymentFees = (amount: number | string, commissionPercenta
 };
 
 // ==========================================
-// 13. CREATE A NEW PAYMENT (Supports Guests & Users)
+// 13. CREATE A NEW PAYMENT & AUTO-FUND WALLET
 // ==========================================
 export const createPaymentService = async (input: any) => {
-  // 1. Fetch the booking along with its related event using Drizzle relational queries ('with')
-  const bookingRecord = await db.query.bookings.findFirst({
-    where: eq(bookings.bookingId, input.bookingId),
-    with: {
-      event: true, // Automatically fetches the related event to get the orgId
-    },
+  return await db.transaction(async (tx) => {
+    // 1. Fetch the booking along with its related event using Drizzle relational queries ('with')
+    const bookingRecord = await tx.query.bookings.findFirst({
+      where: eq(bookings.bookingId, input.bookingId),
+      with: {
+        event: true, // Fetches the related event to get the orgId
+      },
+    });
+
+    if (!bookingRecord) {
+      throw new Error(`Booking with ID ${input.bookingId} not found 🚫`);
+    }
+
+    // 2. Resolve amount and organization ID safely from the fetched relation
+    const paymentAmount = input.amount ?? bookingRecord.totalAmount;
+    const organizationId = input.orgId ?? bookingRecord.event?.orgId;
+
+    if (!organizationId) {
+      throw new Error(`Associated organization could not be found for booking ${input.bookingId} 🚫`);
+    }
+
+    // 3. Calculate platform fee & net amount dynamically
+    const feePercentage = 0.05; // 5% platform fee (Adjust as needed)
+    const numericAmount = Number(paymentAmount);
+    const platformFee = (numericAmount * feePercentage).toFixed(2);
+    const netAmount = (numericAmount - Number(platformFee)).toFixed(2);
+
+    // 4. Insert the secure payment record
+    const [newPayment] = await tx.insert(payments).values({
+      bookingId: bookingRecord.bookingId,
+      orgId: organizationId,
+      digitalId: bookingRecord.digitalId,
+      amount: numericAmount.toFixed(2),
+      platformFee,
+      netAmount,
+      paymentMethod: input.paymentMethod,
+      paymentStatus: input.paymentStatus ?? "Completed", // Usually "Completed" when ticket is bought
+      transactionId: input.transactionId,
+    }).returning();
+
+    // 5. Automatically Update or Create the Organizer's Wallet
+    // (Only fund the wallet if the payment is successfully completed)
+    if (newPayment.paymentStatus === "Completed") {
+      const [existingWallet] = await tx
+        .select()
+        .from(wallets)
+        .where(eq(wallets.orgId, organizationId));
+
+      if (!existingWallet) {
+        // Create a wallet automatically if the org doesn't have one yet
+        await tx.insert(wallets).values({
+          orgId: organizationId,
+          balance: netAmount,
+          pendingBalance: "0.00",
+          currency: "KES", // Default currency, adjust if dynamic
+        });
+      } else {
+        // Increment the existing wallet balance with the net amount
+        const currentBalance = Number(existingWallet.balance || 0);
+        const newBalance = (currentBalance + Number(netAmount)).toFixed(2);
+
+        await tx.update(wallets)
+          .set({ 
+            balance: newBalance,
+            updatedAt: new Date() // <-- Fixed: Pass a Date object directly
+          })
+          .where(eq(wallets.orgId, organizationId));
+      }
+    }
+
+    return newPayment;
   });
-
-  if (!bookingRecord) {
-    throw new Error(`Booking with ID ${input.bookingId} not found 🚫`);
-  }
-
-  // 2. Resolve amount and organization ID safely from the fetched relation
-  const paymentAmount = input.amount ?? bookingRecord.totalAmount;
-  const organizationId = input.orgId ?? bookingRecord.event?.orgId;
-
-  if (!organizationId) {
-    throw new Error(`Associated organization could not be found for booking ${input.bookingId} 🚫`);
-  }
-
-  // 3. (Optional) Fetch organization commission settings if needed, 
-  // or calculate your platform fee & net amount dynamically:
-  const feePercentage = 0.05; // Example: 5% platform fee
-  const numericAmount = Number(paymentAmount);
-  const platformFee = (numericAmount * feePercentage).toFixed(2);
-  const netAmount = (numericAmount - Number(platformFee)).toFixed(2);
-
-  // 4. Insert the secure payment record
-  const [newPayment] = await db.insert(payments).values({
-    bookingId: bookingRecord.bookingId,
-    orgId: organizationId,
-    digitalId: bookingRecord.digitalId,
-    amount: numericAmount.toFixed(2),
-    platformFee,
-    netAmount,
-    paymentMethod: input.paymentMethod,
-    paymentStatus: input.paymentStatus ?? "Pending",
-    transactionId: input.transactionId,
-  }).returning();
-
-  return newPayment;
 };
 
 // ==========================================

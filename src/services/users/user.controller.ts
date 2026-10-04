@@ -12,9 +12,14 @@ import {
 } from "./user.service";
 import {
   insertUserSchema,
-  updateUserSchema,
+  updateProfileSchema,
+  updateAdminUserSchema,
 } from "../../validators/user.1validator";
 import { sendNotificationEmail } from "../../middleware/googleMailer";
+
+// Postgres unique violation (email or contactPhone already used)
+const isUniqueViolation = (error: any) =>
+  error?.code === "23505" || error?.cause?.code === "23505";
 
 // Get all users
 export const getUsers = async (req: Request, res: Response) => {
@@ -128,15 +133,59 @@ export const createUser = async (req: Request, res: Response) => {
   }
 };
 
-// Update user by digitalId (partial update allowed, validated with Zod)
+// Update user by digitalId (users can edit themselves, admins can edit anyone)
+// Only profile fields are accepted here (see updateProfileSchema).
+// `profile_picture` is accepted as an alias for `profileImageUrl`.
 export const updateUser = async (req: Request, res: Response) => {
   const digitalId = parseInt(req.params.digitalId as string);
   if (isNaN(digitalId)) {
-   res.status(400).json({ error: "Invalid digital ID" });
+    res.status(400).json({ error: "Invalid digital ID" });
     return;
   }
 
-  const validationResult = updateUserSchema.safeParse(req.body);
+  // Users may only edit themselves; admins may edit anyone
+  const authUser = (req as any).user; // adjust to however your auth middleware attaches the user
+  const isAdmin = authUser?.role === "admin";
+  if (!isAdmin && Number(authUser?.digitalId) !== digitalId) {
+    res.status(403).json({ error: "You can only update your own profile" });
+    return;
+  }
+
+  const validationResult = updateProfileSchema.safeParse(req.body);
+  if (!validationResult.success) {
+    res.status(400).json({ error: validationResult.error.errors.map(e => e.message).join(", ") });
+    return;
+  }
+
+  if (Object.keys(validationResult.data as object).length === 0) {
+    res.status(400).json({ error: "No valid fields provided for update" });
+    return;
+  }
+
+  try {
+    const result = await updateUserService(digitalId, validationResult.data as any);
+    // Don't echo the submitted body back; it could contain sensitive values
+    res.status(200).json({ message: result });
+    return;
+  } catch (error: any) {
+    if (isUniqueViolation(error)) {
+      res.status(409).json({ error: "That email or phone number is already in use" });
+      return;
+    }
+    res.status(500).json({ error: error.message || "Failed to update user" });
+    return;
+  }
+};
+
+// Update user by digitalId (Admin) - can also change role, isActive, emailVerified and password
+export const updateAdminUser = async (req: Request, res: Response) => {
+  const digitalId = parseInt(req.params.digitalId as string);
+  if (isNaN(digitalId)) {
+    res.status(400).json({ error: "Invalid digital ID" });
+    return;
+  }
+
+  const validationResult = updateAdminUserSchema.safeParse(req.body);
   if (!validationResult.success) {
     res.status(400).json({ error: validationResult.error.errors.map(e => e.message).join(", ") });
     return;
@@ -149,32 +198,12 @@ export const updateUser = async (req: Request, res: Response) => {
 
   try {
     const result = await updateUserService(digitalId, validationResult.data);
-    res.status(200).json({ message: result, updatedFields: validationResult.data });
-    return;
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to update user" });
-    return;
-  }
-};
-
-// Update user by digitalId (Admin)
-export const updateAdminUser = async (req: Request, res: Response) => {
-  const digitalId = parseInt(req.params.digitalId as string);
-  if (isNaN(digitalId)) {
-    res.status(400).json({ error: "Invalid digital ID" });
-    return;
-  }
-
-  const validationResult = insertUserSchema.partial().safeParse(req.body);
-  if (!validationResult.success) {
-    res.status(400).json({ error: validationResult.error.errors.map(e => e.message).join(", ") });
-    return;
-  }
-
-  try {
-    const result = await updateUserService(digitalId, validationResult.data);
     res.status(200).json({ message: result });
   } catch (error: any) {
+    if (isUniqueViolation(error)) {
+      res.status(409).json({ error: "That email or phone number is already in use" });
+      return;
+    }
     res.status(500).json({ error: error.message || "Failed to update user" });
   }
 };

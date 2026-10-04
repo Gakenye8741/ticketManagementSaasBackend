@@ -9,6 +9,9 @@ import pinoHttp from 'pino-http';
 import pino from 'pino';
 import { createServer } from 'node:http';
 
+// Cron Job Import
+import { initEventStatusCron } from './cron/eventStatusCron'; // Adjust path if placed elsewhere
+
 // Route Imports
 import { authRouter } from './auth/auth.route';
 import { userRouter } from './services/users/user.route';
@@ -43,7 +46,6 @@ const loggerInstance = pino({
 });
 
 // Trust proxy if running behind Nginx / Cloudflare load balancer
-// (required so `secure` cookies work behind a TLS-terminating proxy)
 app.set('trust proxy', 1);
 
 // ==========================================
@@ -54,8 +56,8 @@ app.post("/api/payment/webhook", express.raw({ type: "application/json" }), webh
 // ==========================================
 // 2. SECURITY, COMPRESSION & GLOBAL MIDDLEWARE
 // ==========================================
-app.use(helmet()); // Sets secure HTTP response headers
-app.use(compression()); // Gzip/Brotli compression for maximum transfer speed
+app.use(helmet()); 
+app.use(compression()); 
 
 const allowedOrigins = [
   "http://localhost:5173", 
@@ -69,38 +71,33 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // No origin = curl, Postman, REST Client (.http files), server-to-server
     if (!origin || allowedOrigins.includes(origin) || NODE_ENV === 'development') {
       callback(null, true);
     } else {
       callback(new Error('Blocked by CORS policy: Unauthorized Origin'));
     }
   },
-  credentials: true, // lets the browser send/receive the HttpOnly `token` cookie
+  credentials: true, 
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
-// Global Rate Limiter to protect against DDoS, brute-force, and bot scrapers
+// Global Rate Limiter
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300, // limit each IP to 300 requests per windowMs
+  windowMs: 15 * 60 * 1000, 
+  max: 300, 
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "Too many requests from this IP, please try again later." }
 });
 app.use("/api/", globalLimiter);
 
-// Parse Cookies (must run BEFORE any route/auth middleware), JSON & URL-encoded payloads
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// High-speed HTTP request logger
 app.use(pinoHttp({ logger: loggerInstance }));
 
-// Temporary auth debugging. Enable with DEBUG_AUTH=true, then remove when solved.
-// Shows whether the cookie actually reaches the server (never logs the token itself).
 if (process.env.DEBUG_AUTH === 'true') {
   app.use('/api', (req: Request, _res: Response, next: NextFunction) => {
     (req as any).log.info(
@@ -133,14 +130,9 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 // ==========================================
-// 4. API ROUTE REGISTRATION (With Safety Guard)
-// ORDER MATTERS: specific prefixes first, generic '/api' mounts last.
-// A router mounted at '/api' that uses router-level auth (router.use(auth))
-// would otherwise intercept every request below it and reject it with
-// "Authentication token is missing" before the intended router is reached.
+// 4. API ROUTE REGISTRATION
 // ==========================================
 const apiRoutes = [
-  // --- Specific prefixes first ---
   { path: '/api/auth', router: authRouter },
   { path: '/api/organizations', router: OrgRouter },
   { path: '/api/media', router: mediaRouter },
@@ -148,8 +140,6 @@ const apiRoutes = [
   { path: '/api/tickettypes', router: TicketTypeRouter },
   { path: '/api/payments', router: paymentRouter },
   { path: '/api/ticket', router: qrTicketRoutes },
-
-  // --- Generic '/api' mounts last (make sure these use per-route auth, not router.use(auth)) ---
   { path: '/api', router: userRouter },
   { path: '/api', router: venueRoute },
   { path: '/api', router: eventRouter },
@@ -171,8 +161,6 @@ apiRoutes.forEach(({ path, router }) => {
 // ==========================================
 // 5. CENTRALIZED ERROR-HANDLING MIDDLEWARE
 // ==========================================
-
-// 404 handler (must come after all routes)
 app.use((req: Request, res: Response, _next: NextFunction) => {
   (res as any).status(404).json({
     success: false,
@@ -180,8 +168,6 @@ app.use((req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-// Global error handler (4 arguments = Express treats it as an error handler).
-// Turns CORS rejections and unexpected throws into clean JSON instead of HTML stack traces.
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
   const isCorsError = typeof err?.message === 'string' && err.message.startsWith('Blocked by CORS');
   const status = isCorsError ? 403 : err?.status || err?.statusCode || 500;
@@ -199,7 +185,7 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
 });
 
 // ==========================================
-// 6. SERVER INITIALIZATION & GRACEFUL SHUTDOWN
+// 6. SERVER INITIALIZATION & CRON BOOTUP
 // ==========================================
 const server = createServer(app).listen(PORT, () => {
   console.clear();
@@ -214,9 +200,12 @@ const server = createServer(app).listen(PORT, () => {
   Status:       ⚡ Fully Optimized & Ready for Peak Scans
   ==========================================================
   `);
+
+  // ⏱️ Initialize the background event status cron job runner
+  initEventStatusCron();
 });
 
-// Handle graceful shutdown on termination signals (PM2 / Docker / Systemd)
+// Handle graceful shutdown on termination signals
 const shutdown = () => {
   loggerInstance.info("Received kill signal, shutting down gracefully...");
   server.close(() => {
@@ -224,7 +213,6 @@ const shutdown = () => {
     process.exit(0);
   });
 
-  // Force shutdown if connections hang for longer than 10 seconds
   setTimeout(() => {
     loggerInstance.error("Could not close connections in time, forcefully shutting down");
     process.exit(1);
