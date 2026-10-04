@@ -1,0 +1,60 @@
+@baseUrl = http://localhost:5000/api
+@contentType = application/json
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjczNjIxMzY4OCwiZGlnaXRhbElkIjo3MzYyMTM2ODgsIm9yZ0lkIjoxLCJlbWFpbCI6InByb2dyYW1taW5nZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoib3JnYW5pemVyIiwiZmlyc3ROYW1lIjoiT3JnYW5pemVyIiwiaWF0IjoxNzkxMTM5ODg2LCJleHAiOjE3OTYzMjM4ODZ9.M_bqSPLMttOZWtou3iuC_V0CqR9K78O_0GEU7rCxeB4
+
+### 1. Login as Organizer (to get auth cookie / token)
+POST {{baseUrl}}/auth/login
+Content-Type: {{contentType}}
+
+{
+  "email": "programminggakenye@gmail.com",
+  "password": "Gakenye123#"
+}
+
+### 2. Get All Venues for Logged-in Organizer
+GET {{baseUrl}}/venues
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}
+
+### 3. Search Venues by Name
+GET {{baseUrl}}/venues/search?q=Main
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}
+
+### 4. Create a New Venue (Validated with Zod & Scoped to orgId)
+POST {{baseUrl}}/venues
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}
+
+{
+  "name": "KICC Tsavo Ballroom",
+  "location": "Nairobi CBD",
+  "address": "City Square, Harambee Avenue",
+  "capacity": 4500,
+  "description": "Main convention and events center"
+}
+
+### 5. Get Venue By Name
+GET {{baseUrl}}/venues/KICC%20Tsavo%20Ballroom
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}
+
+### 6. Get Venue Details including Events
+GET {{baseUrl}}/details/venues/search?name=KICC%20Tsavo%20Ballroom
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}
+
+### 7. Update an Existing Venue (Replace 1 with actual venue ID)
+PUT {{baseUrl}}/venues/3
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}
+
+{
+  "name": "KICC Main Auditorium",
+  "capacity": 5000
+}
+
+### 8. Delete an Existing Venue (Replace 1 with actual venue ID)
+DELETE {{baseUrl}}/venues/1
+Content-Type: {{contentType}}
+Cookie: auth_token={{token}}

@@ -1,52 +1,73 @@
-import { eq, ilike } from "drizzle-orm";
+import { eq, ilike, and } from "drizzle-orm";
 import db from "../../drizzle/db";
 import { events, TInsertVenue, TSelectVenue, venues } from "../../drizzle/schema";
 
-// Get All Venues
-export const getAllVenueServices = async (): Promise<TSelectVenue[]> =>{
-
-    return await db.query.venues.findMany();
-
+// Get All Venues (Scoped to organizer)
+export const getAllVenueServices = async (orgId: number): Promise<TSelectVenue[]> =>{
+    return await db.query.venues.findMany({
+        where: eq(venues.orgId, orgId)
+    });
 }
 
-// Get Venue by Id
-export const getVenueByIdServices = async (venueName:string) :Promise<TSelectVenue | undefined> =>{
-
+// Get Venue by Id (Scoped to organizer)
+export const getVenueByIdServices = async (venueName: string, orgId: number) :Promise<TSelectVenue | undefined> =>{
     return await db.query.venues.findFirst({
-        where: ilike(venues.name,venueName)
+        where: and(ilike(venues.name, venueName), eq(venues.orgId, orgId))
     })
 }
-// search venue by name
-export const searchVenuesByName = async (searchTerm: string): Promise<TSelectVenue[]> => {
+
+// search venue by name (Scoped to organizer)
+export const searchVenuesByName = async (searchTerm: string, orgId: number): Promise<TSelectVenue[]> => {
   return await db.query.venues.findMany({
-    where: ilike(venues.name, `%${searchTerm}%`),
+    where: and(ilike(venues.name, `%${searchTerm}%`), eq(venues.orgId, orgId)),
   });
 };
 
-// get all details related to a Venue
-export const getAllDetailsForVenue = async (venueName :string) =>{
-  return await db.query.venues.findFirst({
-    where: ilike(venues.name, `%${venueName}%`),
-    with: {
-      events: true
-    }
-  })
-}
 
-// create A new Venue
-export const CreateVenueServices = async(venue:TInsertVenue) : Promise<string> =>{
+
+export const getVenueDetailsByNameService = async (venueName: string, orgId: number) => {
+  // 1. Explicitly type the result using TSelectVenue to prevent TS7022 inference errors
+  const venueList: TSelectVenue[] = await db
+    .select()
+    .from(venues)
+    .where(and(eq(venues.name, venueName), eq(venues.orgId, orgId)));
+
+  // Guard against empty results before accessing index 0
+  if (!venueList || venueList.length === 0) {
+    throw new Error("Venue not found");
+  }
+
+  const venue = venueList[0];
+
+  // 2. Query events safely after the venue has been confirmed
+  const venueEvents = await db
+    .select()
+    .from(events)
+    .where(eq(events.venueId, venue.venueId));
+
+  return {
+    ...venue,
+    events: venueEvents,
+  };
+};
+
+// create A new Venue (Automatically binds to the creator's orgId)
+export const CreateVenueServices = async(venue: TInsertVenue) : Promise<string> =>{
   await db.insert(venues).values(venue).returning();
   return "Venue Created Successfully ✅";
 }
 
-// updating An Existing Venue
-export const updateVenueServices = async(venueid: number,venue: Partial<TInsertVenue>) : Promise<string> =>{
-  await db.update(venues).set(venue).where(eq(venues.venueId, venueid))
- return "Venue Updated succesfully 🔄"
+// updating An Existing Venue (Scoped to organizer)
+export const updateVenueServices = async(venueid: number, venue: Partial<TInsertVenue>, orgId: number) : Promise<string> =>{
+  await db.update(venues)
+    .set(venue)
+    .where(and(eq(venues.venueId, venueid), eq(venues.orgId, orgId)));
+  return "Venue Updated succesfully 🔄"
 }
 
-// deleting Venue by Id
-export const deleteVenueByIdServices = async(venueId: number): Promise<string>=>{
-  await db.delete(venues).where(eq(venues.venueId,venueId))
+// deleting Venue by Id (Scoped to organizer)
+export const deleteVenueByIdServices = async(venueId: number, orgId: number): Promise<string>=>{
+  await db.delete(venues)
+    .where(and(eq(venues.venueId, venueId), eq(venues.orgId, orgId)));
   return "User Deleted SuccessFully ❌";
 }

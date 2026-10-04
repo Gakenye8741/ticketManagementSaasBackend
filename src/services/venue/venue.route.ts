@@ -1,28 +1,35 @@
 import { Router } from "express";
-import { CreateVenue, DeleteVenue, GetAllVenues, getVenueByName, searchVenue, updateVenue, venueDetails } from "./venue.controller";
-import { adminAuth, anyAuthenticatedUser } from "../../middleware/bearAuth";
-
+import {
+  getAllVenuesController,
+  getVenueByNameController,
+  searchVenuesController,
+  getVenueDetailsController,
+  createVenueController,
+  updateVenueController,
+  deleteVenueController,
+} from "./venue.controller";
+import { adminAuth, anyAuthenticatedUser, organizerAuth, adminOrOrganizerAuth } from "../../middleware/bearAuth"; // adjust import path to your auth middleware if needed
 
 export const venueRoute = Router();
 
 // Venue Routes
 // Search by Name
-venueRoute.get("/venues/search", searchVenue);
+venueRoute.get("/venues/search", anyAuthenticatedUser, searchVenuesController);
 
 // Get All Venues
-venueRoute.get('/venues' ,GetAllVenues)
+venueRoute.get('/venues', anyAuthenticatedUser, getAllVenuesController);
 
 // Get Venue By Name
-venueRoute.get('/venues/:name',anyAuthenticatedUser, getVenueByName)
+venueRoute.get('/venues/:name', anyAuthenticatedUser, getVenueByNameController);
 
-//Get All Venue details through searching
-venueRoute.get('/details/venues/search',adminAuth, venueDetails)
+// Get All Venue details through searching
+venueRoute.get('/details/venues/search', adminOrOrganizerAuth, getVenueDetailsController);
 
-// // Create a new venue
-venueRoute.post("/venues",adminAuth, CreateVenue);
+// Create a new venue
+venueRoute.post("/venues", organizerAuth, createVenueController);
 
 // Update an existing venue
-venueRoute.put("/venues/:id",adminAuth, updateVenue);
+venueRoute.put("/venues/:id", organizerAuth, updateVenueController);
 
 // Delete an existing venue
-venueRoute.delete("/venues/:id",adminAuth, DeleteVenue);
+venueRoute.delete("/venues/:id", organizerAuth, deleteVenueController);

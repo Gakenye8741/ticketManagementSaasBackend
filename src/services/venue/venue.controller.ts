@@ -1,122 +1,167 @@
-import { Response, Request } from "express";
-import { CreateVenueServices, deleteVenueByIdServices, getAllDetailsForVenue, getAllVenueServices, getVenueByIdServices, searchVenuesByName, updateVenueServices } from "./venue.service";
+import { Request, Response } from "express";
+import {
+  getAllVenueServices,
+  getVenueByIdServices,
+  searchVenuesByName,
+  CreateVenueServices,
+  updateVenueServices,
+  deleteVenueByIdServices,
+  getVenueDetailsByNameService,
+} from "./venue.service";
+import { createVenueSchema, updateVenueSchema } from "../../validators/venue.validator";
 
-// Get all Venues
-export const GetAllVenues = async(req: Request, res: Response) =>{
-    try {
-        const AllVenues = await getAllVenueServices();
-        if(!AllVenues || AllVenues.length === 0){
-            res.status(404).json({message: "No Venues Found😔"});
-        }
-        else{
-            res.status(200).json(AllVenues)
-        }
-    } catch (error: any) {
-        res.status(500).json({error: error.message || "Error Occured! Failed To Fetch Venue 😥"})        
-    }
-}
-
-// Get Venue By Name
-export const getVenueByName = async (req: Request, res: Response)=>{
-   const VenueName =  req.params.name as string;   
-   try {
-    const venueBYName = await getVenueByIdServices(VenueName);
-    if(!venueBYName){
-        res.status(404).json({message: "No venue Found 😔"})
-    }
-    else{
-        res.status(200).json(venueBYName)
-    }
-   } catch (error: any) {
-    res.status(500).json({error: error.message || "error Occured! Failed To Fetch Venue😥"})
-   }
-}
-
-// Search venue by Name
-export const searchVenue = async(req: Request,res: Response) => {
-    const searchName = req.query.name as string;
-    if(!searchName){
-        res.status(400).json({error: "Missing Name query parameter"});
-        return;
-    }
-    try {
-        const searchVenueDetails = await searchVenuesByName(searchName)
-        if(!searchVenueDetails || searchVenueDetails.length === 0){
-            res.status(404).json({message: "No Venue Found With That Name😔"});
-        }else{
-            res.status(200).json(searchVenueDetails);
-        }
-    } catch (error: any) {
-        res.status(500).json({error: error.message || "Errror Occured Failed to fearch Venue😥"})
-    }
-}
-
-// Get full Venue Details 
-export const venueDetails = async (req: Request, res: Response) =>{
-    const venueName = req.query.name as string;
-    if(!venueName){
-        res.status(400).json({error: "Missing Name query parameter🥲"});
-        return;
-    }
-    try {
-        const venue_Details = await getAllDetailsForVenue(venueName);
-        if(!venue_Details ){
-            res.status(404).json("No Venue Name Like That...Try Again🥲")
-        }else{
-            res.status(200).json(venue_Details);
-        }
-    } catch (error:any) {
-        res.status(500).json({error: error.message || "Error Occured...Failed To Fetch Venue Details🥲"});
-    }
-}
-
-// Create a Venue
-export const CreateVenue = async(req: Request, res: Response) =>{
-    const {name, address, capacity ,status} = req.body;
-    if(!name || !address || !capacity || !status ){
-       res.status(400).json({ error: "⚠️ All Fields Are Required" });
-    }
-    try {
-     const results = await CreateVenueServices({name, address, capacity ,status});
-     res.status(200).json({message: results});
-        
-    } catch (error:any) {
-    res.status(500).json({error: "⚠️ " + (error.message || "Error Occured while creating Venue")})
-   }
-}
-
-// Deleting A venue
-export const DeleteVenue = async(req: Request, res: Response) =>{
-    const venueId = parseInt(req.params.id as string);
-    if(isNaN(venueId)){
-        res.status(400).json({ error: "🚫 Invalid Venue ID" });
-        return;
-    }
-    
-   try {
-    const result = await deleteVenueByIdServices(venueId);
-    res.status(200).json({ message: "✅ Venue Deleted Suuceesfully"}); 
-  } catch (error: any) {
-    res.status(500).json({ error: "🚫 " + (error.message || "Failed to delete Venue") });
-  }
-}
-
-// Updating Venue
-export const updateVenue = async (req: Request, res: Response) => {
-  const venueId = parseInt(req.params.id as string);
-  if (isNaN(venueId)) {
-    res.status(400).json({ error: "🚫 Invalid venue ID" });
-    return;
-  }
-  const { name, address, capacity} = req.body;
-  if (!name || !address || !capacity  ) {
-    res.status(400).json({ error: "⚠️ All fields are required" });
-    return;
-  }
+// Get All Venues for Logged-in Organizer
+export const getAllVenuesController = async (req: Request, res: Response) => {
   try {
-    const result = await updateVenueServices(venueId, { name, address, capacity });
-    res.status(200).json({ message: "✅ " + result });
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    const venues = await getAllVenueServices(orgId);
+    return res.status(200).json({ success: true, data: venues });
   } catch (error: any) {
-    res.status(500).json({ error: "🚫 " + (error.message || "Failed to update venue") });
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+};
+
+// Get Venue by Name (Scoped to Organizer)
+export const getVenueByNameController = async (req: Request, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    const rawName = req.params.name;
+    const venueName = typeof rawName === "string" ? rawName : rawName[0];
+    const venue = await getVenueByIdServices(venueName, orgId);
+
+    if (!venue) {
+      return res.status(404).json({ error: "Venue not found or unauthorized" });
+    }
+
+    return res.status(200).json({ success: true, data: venue });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+};
+
+// Search Venues by Name
+export const searchVenuesController = async (req: Request, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    const queryQ = req.query.q;
+    const searchTerm = typeof queryQ === "string" ? queryQ : "";
+    const venues = await searchVenuesByName(searchTerm, orgId);
+
+    return res.status(200).json({ success: true, count: venues.length, data: venues });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+};
+
+// Get Venue Details including Events
+export const getVenueDetailsController = async (req: Request, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    const rawName = req.query.name;
+    let venueName: string | undefined;
+
+    if (typeof rawName === "string") {
+      venueName = rawName;
+    } else if (Array.isArray(rawName) && rawName.length > 0 && typeof rawName[0] === "string") {
+      venueName = rawName[0];
+    }
+
+    if (!venueName) {
+      return res.status(400).json({ error: "Venue name query parameter is required" });
+    }
+
+    const venueDetails = await getVenueDetailsByNameService(venueName, orgId);
+    return res.status(200).json({ success: true, data: venueDetails });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+};
+
+// Create New Venue (Validated with Zod)
+export const createVenueController = async (req: Request, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    const validationResult = createVenueSchema.safeParse(req.body);
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validationResult.error.format(),
+      });
+    }
+
+    const venueData = {
+      ...validationResult.data,
+      orgId,
+    };
+
+    const responseMessage = await CreateVenueServices(venueData as any);
+    return res.status(201).json({ success: true, message: responseMessage });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+};
+
+// Update Venue (Validated with Zod)
+export const updateVenueController = async (req: Request, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    const rawId = req.params.id;
+    const venueId = parseInt(typeof rawId === "string" ? rawId : rawId[0], 10);
+
+    const validationResult = updateVenueSchema.safeParse(req.body);
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validationResult.error.format(),
+      });
+    }
+
+    const responseMessage = await updateVenueServices(venueId, validationResult.data, orgId);
+    return res.status(200).json({ success: true, message: responseMessage });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+};
+
+// Delete Venue by ID
+export const deleteVenueController = async (req: Request, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) {
+      return res.status(401).json({ error: "Unauthorized: Missing organization ID" });
+    }
+
+    // Safely extract string from req.params.id
+    const rawId = req.params.id;
+    const venueId = parseInt(typeof rawId === "string" ? rawId : rawId[0], 10);
+
+    const responseMessage = await deleteVenueByIdServices(venueId, orgId);
+    return res.status(200).json({ success: true, message: responseMessage });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
   }
 };

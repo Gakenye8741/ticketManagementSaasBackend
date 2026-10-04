@@ -13,6 +13,7 @@ type DecodedToken = {
   email: string;
   role: UserRole;
   fullName?: string;
+  orgId: number | null; // <--- Add this line here
   exp: number;
 };
 
