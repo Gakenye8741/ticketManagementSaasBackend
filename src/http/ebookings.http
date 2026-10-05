@@ -1,13 +1,14 @@
-# @baseUrl = http://localhost:5000/api
-@baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api
+@baseUrl = http://localhost:5000/api
+# @baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api
 @eventId = 1
 @slug = nairobi-tech1-summit-2026-8798
 @bookingId = 2
 @orgId = 1
 @digitalId = 736213688
 @category = technology
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQ2Nzk3MTIwMCwiZGlnaXRhbElkIjo0Njc5NzEyMDAsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IkFkbWluIiwiaWF0IjoxNzkwMDE2MjE5LCJleHAiOjE3OTUyMDAyMTl9.6k9lqOvTF_o8J06SR7_F9JbnEnobxuj7mQnSVEa3zMU
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjczNjIxMzY4OCwiZGlnaXRhbElkIjo3MzYyMTM2ODgsIm9yZ0lkIjoxLCJlbWFpbCI6InByb2dyYW1taW5nZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoib3JnYW5pemVyIiwiZmlyc3ROYW1lIjoiT3JnYW5pemVyIiwiaWF0IjoxNzkxMjE1NzU5LCJleHAiOjE3OTYzOTk3NTl9.PM0Fjd2Pp9MxBlL7Ebq4ozzr7xLFpCDRi1ccqldiFjsa
 
+@admintoken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjM4MzMxMDA1OSwiZGlnaXRhbElkIjozODMzMTAwNTksIm9yZ0lkIjpudWxsLCJlbWFpbCI6ImNvZGV3aXRoZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoiYWRtaW4iLCJmaXJzdE5hbWUiOiJhZG1pbiIsImlhdCI6MTc5MTExODUwMiwiZXhwIjoxNzk2MzAyNTAyfQ.aICXDFTR-MIBMKzQqLRvT8fxObKB0YBf9JRacBnl-G8
 ### ==========================================
 ### 📅 PUBLIC EVENT ENDPOINTS
 ### ==========================================
@@ -48,7 +49,7 @@ Content-Type: application/json
 Cookie: token={{token}}
 
 {
-  "title": "Nairobi Tech1 Summit 2026",
+  "title": "Nairobi Tech5 Summit 2026",
   "slug": "nairobi-tech1-summit-2026",
   "description": "Annual gathering of software engineers, founders, and tech enthusiasts.",
   "category": "technology",
@@ -133,8 +134,12 @@ Cookie: token={{token}}
 }
 
 ### 12. Delete an Event (Admin Only)
-DELETE {{baseUrl}}/events/5
-Cookie: token={{token}}
+DELETE {{baseUrl}}/events/16
+Cookie: token={{admintoken}}
+
+
+### 1. Get All Events Catalog
+GET {{baseUrl}}/events
 
 
 ### ==========================================

@@ -1,0 +1,178 @@
+@baseUrl = http://localhost:5000/api/verifications
+@organizerToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjk0MzIxMzczNywiZGlnaXRhbElkIjo5NDMyMTM3MzcsIm9yZ0lkIjo1LCJlbWFpbCI6ImJyYXlvZ2FrZW55ZTA0QGdtYWlsLmNvbSIsInJvbGUiOiJvcmdhbml6ZXIiLCJmaXJzdE5hbWUiOiJHYWtlbnllIiwiaWF0IjoxNzkxMjI1NTgxLCJleHAiOjE3OTY0MDk1ODF9.ZDNe1JZ6UnSF1ksbDN74pghU-OxC9rmWT5nAH0wNRZ4
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjk0MTI4MTY4MiwiZGlnaXRhbElkIjo5NDEyODE2ODIsIm9yZ0lkIjpudWxsLCJlbWFpbCI6ImNvZGV3aXRoZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoiYWRtaW4iLCJmaXJzdE5hbWUiOiJBZG1pbiIsImlhdCI6MTc5MTIyNTY5MSwiZXhwIjoxNzk2NDA5NjkxfQ.c_QNyZGP8N2miw7OdApSgpJXCAujJP1koL-RtdVultM
+
+@verificationId =  6
+@userId = 943213737
+@orgId = 5
+
+
+### ==========================================
+### ORGANIZER & CREATOR PORTAL REQUESTS
+### ==========================================
+
+### 1. Submit New Organizer Verification (KYC)
+POST {{baseUrl}}
+Content-Type: application/json
+Cookie: token={{organizerToken}}
+
+{
+  "userId": {{userId}},
+  "orgId": {{orgId}},
+  "entityType": "individual",
+  "legalFullName": "John Doe Kamau",
+  "idFrontUrl": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+  "idBackUrl": "https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=800&q=80",
+  "selfiePhotos": [
+    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=800&q=80"
+  ],
+  "businessDocUrl": "https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80",
+  "taxCertUrl": "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80"
+}
+
+
+### ==========================================
+### SHARED / LOOKUP REQUESTS
+### ==========================================
+
+### 3. Get Verification by User Digital ID
+GET {{baseUrl}}/user/{{userId}}
+Authorization: {{organizerToken}}
+
+### 4. Get Verification by Organization ID
+GET {{baseUrl}}/organization/{{orgId}}
+Authorization: {{organizerToken}}
+
+
+### ==========================================
+### ADMIN REVIEW & DASHBOARD REQUESTS
+### ==========================================
+
+### 2. Get Verification Record by ID
+GET {{baseUrl}}/{{verificationId}}
+token:  token={{adminToken}}
+
+### 5. Get All Verifications (With Pagination)
+GET {{baseUrl}}?limit=10&offset=0
+token:  token={{adminToken}}
+
+### 6. Get Verifications Filtered by Status
+GET {{baseUrl}}/status/pending
+token:  token={{adminToken}}
+
+### 7. Get Verifications Filtered by Entity Type
+GET {{baseUrl}}/entity/individual
+token:  token={{adminToken}}
+
+### 8. Update General Verification Details (Organizer)
+PATCH {{baseUrl}}/{{verificationId}}
+Content-Type: application/json
+Authorization: {{organizerToken}}
+
+{
+  "legalFullName": "John Doe Updated"
+}
+
+### 9. Update Global Review Status (Admin)
+PATCH {{baseUrl}}/{{verificationId}}/status
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "status": "in_progress",
+  "adminComment": "Review has started by compliance team."
+}
+
+### 10. Fully Approve Organizer Verification
+PATCH {{baseUrl}}/{{verificationId}}/approve
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "adminComment": "All compliance checks passed successfully."
+}
+
+### 11. Globally Reject Verification
+PATCH {{baseUrl}}/{{verificationId}}/reject
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "reason": "Provided identification documents are fraudulent or blurry."
+}
+
+### 12. Request General Resubmission
+PATCH {{baseUrl}}/{{verificationId}}/request-resubmission
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "generalComment": "Please re-upload clearer documents."
+}
+
+### 13. Itemized Rejection: Front ID
+PATCH {{baseUrl}}/{{verificationId}}/reject-field/id-front
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "comment": "Front ID corners are cut off. Please retake photo."
+}
+
+### 14. Itemized Rejection: Back ID
+PATCH {{baseUrl}}/{{verificationId}}/reject-field/id-back
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "comment": "Back ID text is unreadable."
+}
+
+### 15. Itemized Rejection: Selfies
+PATCH {{baseUrl}}/{{verificationId}}/reject-field/selfies
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "comment": "Live selfie does not match ID photo clearly."
+}
+
+### 16. Itemized Rejection: Business Document
+PATCH {{baseUrl}}/{{verificationId}}/reject-field/business-doc
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "comment": "Business certificate registration number is expired."
+}
+
+### 17. Itemized Rejection: Tax Certificate
+PATCH {{baseUrl}}/{{verificationId}}/reject-field/tax-cert
+Content-Type: application/json
+token:  token={{adminToken}}
+
+{
+  "comment": "KRA tax compliance certificate is invalid."
+}
+
+### 18. Clear Itemized Rejection on Re-upload (Organizer)
+PATCH {{baseUrl}}/{{verificationId}}/clear-rejection
+Content-Type: application/json
+Authorization: {{organizerToken}}
+
+{
+  "field": "idFront",
+  "newUrlValue": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80"
+}
+
+### 19. Get Count of Pending Verifications (Admin Metric)
+GET {{baseUrl}}/metrics/pending-count
+token:  token={{adminToken}}
+
+### 20. Get All Verifications Awaiting Resubmission Review
+GET {{baseUrl}}/metrics/needing-resubmission
+token:  token={{adminToken}}
+
+### 21. Delete Verification Record (Admin Cleanup)
+DELETE {{baseUrl}}/{{verificationId}}
+token:  token={{adminToken}}

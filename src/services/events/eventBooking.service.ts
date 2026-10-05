@@ -7,8 +7,10 @@ import {
   TSelectEvent,
   TSelectBooking,
   ticketTypes,
+  organizerVerifications,
 } from "../../drizzle/schema";
 import { processAndEmailTicketService } from "../EmailTicket/emailTicket.Service";
+import { getVerificationByUserId } from "../verification/verification.service";
 
 // Export types for controllers and validators
 export type { TInsertEvent, TSelectEvent, TSelectBooking };
@@ -111,12 +113,48 @@ export const getEventsByUserIdService = async (
   });
 };
 
-// 8. ➕ Create a new event
+// 8. ➕ Create a new event with Organization & User Digital ID verification check
 export const createEventService = async (
   eventData: TInsertEvent
 ): Promise<{ success: boolean; message: string; data?: TSelectEvent }> => {
+  const orgId = eventData.orgId;
+
+  if (!orgId) {
+    return { 
+      success: false, 
+      message: "Organization ID is missing. Cannot verify event organizer ❌" 
+    };
+  }
+
+  // 1. Fetch the verification record linked to this organization, 
+  // ensuring we pull in the user relation to check their digitalId
+  const verificationRecord = await db.query.organizerVerifications.findFirst({
+    where: eq(organizerVerifications.orgId, orgId),
+    with: {
+      user: true, // This brings in the user details including their digitalId
+    },
+  });
+
+  // 2. Check if the verification record exists, is approved, and has a valid user digitalId
+  if (!verificationRecord || verificationRecord.status !== "approved" || !verificationRecord.user?.digitalId) {
+    return { 
+      success: false, 
+      message: "Event creation denied ❌. The event organizer's digital ID is either unverified or pending approval." 
+    };
+  }
+
+  // Optional: You can explicitly log or verify the digitalId here if needed
+  const organizerDigitalId = verificationRecord.user.digitalId;
+  console.log(`Verified organizer digital ID: ${organizerDigitalId} posting event...`);
+
+  // 3. If everything checks out, proceed with creating the event
   const [newEvent] = await db.insert(events).values(eventData).returning();
-  return { success: true, message: "Event created successfully ✅", data: newEvent };
+  
+  return { 
+    success: true, 
+    message: "Event created successfully ✅", 
+    data: newEvent 
+  };
 };
 
 // 9. 🔄 Update event details

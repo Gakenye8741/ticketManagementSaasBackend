@@ -206,10 +206,17 @@ export const createEvent: RequestHandler = async (req, res) => {
     };
 
     const result = await createEventService(eventPayload);
+
+    // Check if the service denied event creation due to verification failure
+    if (!result.success) {
+      res.status(403).json({ success: false, message: result.message });
+      return;
+    }
+
     res.status(201).json({
       success: true,
       message: "Event created successfully on TicketStream! 🎟️✨",
-      data: result,
+      data: result.data,
     });
   } catch (error: any) {
     console.error("[CREATE_EVENT_ERROR]", error);

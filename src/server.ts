@@ -31,6 +31,7 @@ import walletRouter from './services/Wallet/Wallet.route';
 import paymentRouter from './services/payments/payments.route';
 import TicketRouter from './services/tickets/ticket.route';
 import TicketTypeRouter from './services/TicketType/tickettype.route';
+import verificationRouter from './services/verification/verification.routes';
 
 dotenv.config();
 
@@ -140,6 +141,7 @@ const apiRoutes = [
   { path: '/api/tickettypes', router: TicketTypeRouter },
   { path: '/api/payments', router: paymentRouter },
   { path: '/api/ticket', router: qrTicketRoutes },
+  { path: '/api/verifications', router: verificationRouter },
   { path: '/api', router: userRouter },
   { path: '/api', router: venueRoute },
   { path: '/api', router: eventRouter },

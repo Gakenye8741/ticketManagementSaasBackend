@@ -2,8 +2,8 @@
 ### TICKETSTREAM AUTHENTICATION API REQUESTS
 ### ==========================================================
 
-# @baseUrl = http://localhost:5000/api/auth
-@baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api/auth
+@baseUrl = http://localhost:5000/api/auth
+# @baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api/auth
 @adminEmail =  codewithgakenye@gmail.com
 @organizerEmail = programminggakenye@gmail.com
 ### 1. Register User
@@ -34,7 +34,7 @@ POST {{baseUrl}}/login
 Content-Type: application/json
 
 {
-  "email": "{{organizerEmail}}",
+  "email": "{{adminEmail}}",
   "password": "Gakenye123#"
 }
 

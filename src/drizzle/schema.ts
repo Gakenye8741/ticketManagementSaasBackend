@@ -57,6 +57,19 @@ export const notificationTypeEnum = pgEnum("notificationType", [
   "refund_issued",
   "password_reset",
 ]);
+
+export const verificationStatusEnum = pgEnum("verification_status", [
+  "pending",                 // Newly submitted, waiting in queue
+  "in_progress",             // Admin is actively reviewing
+  "resubmission_requested",  // Specific photos/documents need fixes
+  "approved",                // Fully verified
+  "rejected",                // Failed verification entirely
+  "suspended",               // Revoked due to fraud/suspicious activity
+]);
+
+// Entity type enum
+export const entityTypeEnum = pgEnum("entity_type", ["individual", "corporate"]);
+
 export const notificationChannelEnum = pgEnum("notificationChannel", ["email", "sms", "whatsapp"]);
 export const refundStatusEnum = pgEnum("refundStatus", ["Pending", "Processing", "Completed", "Failed", "Rejected"]);
 
@@ -114,6 +127,63 @@ export const refreshTokens = pgTable("refresh_tokens", {
   return {
     userIdx: index("refresh_token_user_idx").on(table.digitalId),
     tokenHashIdx: uniqueIndex("refresh_token_hash_idx").on(table.tokenHash),
+  };
+});
+
+// organizerVerifications   table
+
+export const organizerVerifications = pgTable("organizer_verifications", {
+  id: serial("id").primaryKey(),
+  
+  // Foreign Keys mapping to your tables
+  userId: integer("digitalId")
+    .notNull()
+    .references(() => users.digitalId, { onDelete: "cascade" }),
+    
+  orgId: integer("orgId")
+    .references(() => organizations.orgId, { onDelete: "cascade" }),
+
+  entityType: entityTypeEnum("entityType").default("individual").notNull(),
+  legalFullName: varchar("legalFullName", { length: 255 }).notNull(),
+
+  // 1. Identity Verification (KYC - Cloudinary URLs)
+  idFrontUrl: text("idFrontUrl").notNull(),
+  idBackUrl: text("idBackUrl").notNull(),
+  selfiePhotos: text("selfiePhotos").array().notNull(),
+
+  // 3. Business Details (Required if entityType is 'corporate')
+  businessRegistrationDocUrl: text("businessRegistrationDocUrl"),
+  taxComplianceCertUrl: text("taxComplianceCertUrl"),
+
+  // =========================================================================
+  // GRANULAR FIELD-LEVEL FEEDBACK & REJECTION REASONS
+  // =========================================================================
+  idFrontRejected: boolean("idFrontRejected").notNull().default(false),
+  idFrontComment: text("idFrontComment"), // e.g. "Blurry, retake with better lighting"
+
+  idBackRejected: boolean("idBackRejected").notNull().default(false),
+  idBackComment: text("idBackComment"),   // e.g. "Corners cut off, show full ID card"
+
+  selfiesRejected: boolean("selfiesRejected").notNull().default(false),
+  selfiesComment: text("selfiesComment"), // e.g. "Live selfie did not match ID face clearly"
+
+  businessDocRejected: boolean("businessDocRejected").notNull().default(false),
+  businessDocComment: text("businessDocComment"),
+
+  taxCertRejected: boolean("taxCertRejected").notNull().default(false),
+  taxCertComment: text("taxCertComment"),
+
+  // Global Review Status & General Admin Comments
+  status: verificationStatusEnum("status").default("pending").notNull(),
+  adminComment: text("adminComment"), // Overall application summary or final rejection reason
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => {
+  return {
+    userVerifIdx: index("organizer_verif_user_idx").on(table.userId),
+    orgVerifIdx: index("organizer_verif_org_idx").on(table.orgId),
+    statusIdx: index("organizer_verif_status_idx").on(table.status),
   };
 });
 
@@ -622,6 +692,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   refreshTokens: many(refreshTokens),
   refundsInitiated: many(refunds),
   auditLogs: many(auditLogs),
+  verifications: many(organizerVerifications), // Added for user KYC verification records
 }));
 
 export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
@@ -630,6 +701,8 @@ export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
     references: [users.digitalId],
   }),
 }));
+
+
 
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   members: many(organizationMembers),
@@ -645,6 +718,18 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   promoCodes: many(promoCodes),
   scannerLogs: many(scannerLogs),
   auditLogs: many(auditLogs),
+  verifications: many(organizerVerifications), // Added for corporate verification records
+}));
+
+export const organizerVerificationsRelations = relations(organizerVerifications, ({ one }) => ({
+  user: one(users, {
+    fields: [organizerVerifications.userId],
+    references: [users.digitalId],
+  }),
+  organization: one(organizations, {
+    fields: [organizerVerifications.orgId],
+    references: [organizations.orgId],
+  }),
 }));
 
 export const organizationMembersRelations = relations(organizationMembers, ({ one }) => ({
@@ -951,3 +1036,6 @@ export type TInsertNotification = typeof notifications.$inferInsert;
 
 export type TSelectAuditLog = typeof auditLogs.$inferSelect;
 export type TInsertAuditLog = typeof auditLogs.$inferInsert;
+
+export type TSelectOrganizerVerification = typeof organizerVerifications.$inferSelect;
+export type TInsertOrganizerVerification = typeof organizerVerifications.$inferInsert;

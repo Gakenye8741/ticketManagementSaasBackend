@@ -15,6 +15,13 @@
       "when": 1790492390758,
       "tag": "0001_damp_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791215667447,
+      "tag": "0002_furry_terrax",
+      "breakpoints": true
     }
   ]
 }
