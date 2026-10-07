@@ -1,5 +1,5 @@
-@baseUrl = http://localhost:5000/api/organizations
-# @baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api/organizations
+# @baseUrl = http://localhost:5000/api/organizations
+@baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api/organizations
 @orgId = 1
 @digitalId = 1
 @memberId = 1
@@ -112,7 +112,7 @@ Cookie: token={{adminToken}}
 }
 
 ### 17. Delete Organization (Protected: Admin Only)
-DELETE {{baseUrl}}/{{orgId}}
+DELETE {{baseUrl}}/6
 Cookie: token={{token}}
 
 

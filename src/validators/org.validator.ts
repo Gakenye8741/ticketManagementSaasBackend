@@ -2,16 +2,19 @@ import { z } from "zod";
 
 // ===================== CREATE ORGANIZATION VALIDATOR =====================
 export const createOrganizationValidator = z.object({
-  name: z.string().min(1, "Organization name is required").max(255),
+  name: z.string().trim().min(1, "Organization name is required").max(255),
   slug: z
     .string()
+    .trim()
+    .toLowerCase()
     .min(1, "Slug is required")
     .max(255)
-    .regex(/^[a-z0-9-]+$/, "Slug must contain only lowercase letters, numbers, and hyphens"),
-  supportEmail: z.string().email("Invalid support email address").optional().nullable(),
-  supportPhone: z.string().min(10, "Support phone must be at least 10 characters").max(20).optional().nullable(),
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must contain only lowercase letters, numbers, and hyphens"),
+  supportEmail: z.string().trim().email("Invalid support email address").optional().nullable(),
+  supportPhone: z.string().trim().min(10, "Support phone must be at least 10 characters").max(20).optional().nullable(),
   logoUrl: z.string().url("Invalid logo URL").optional().nullable(),
-  payoutPhone: z.string().min(10, "Payout phone must be valid").max(20).optional().nullable(),
+  // Paybill / bank numbers can be shorter than a phone number, so the minimum is relaxed
+  payoutPhone: z.string().trim().min(5, "Payout phone / account is too short").max(30).optional().nullable(),
   payoutType: z.enum(["mpesa_phone", "paybill", "bank"]).default("mpesa_phone"),
   commissionPercentage: z
     .string()
@@ -57,6 +60,6 @@ export const updateMemberRoleValidator = z.object({
 });
 
 export const updatePayoutConfigValidator = z.object({
-  payoutPhone: z.string().min(10, "Payout phone number is required").max(20),
+  payoutPhone: z.string().trim().min(5, "Payout phone / account is required").max(30),
   payoutType: z.enum(["mpesa_phone", "paybill", "bank"]),
 });
