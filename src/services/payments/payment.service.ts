@@ -1,4 +1,4 @@
-import { eq, desc, and, sql, sum, count, gte, lte } from "drizzle-orm";
+import { eq, desc, and, sum, count, gte, lte } from "drizzle-orm";
 import db from "../../drizzle/db";
 import {
   payments,
@@ -6,9 +6,10 @@ import {
   TInsertPayment,
   TSelectPayment,
   paymentStatusEnum,
-  organizations,
-  wallets
+  wallets,
 } from "../../drizzle/schema";
+import { confirmBookingAfterPayment } from "../events/eventBooking.service";
+
 
 // ==========================================
 // 1. GET ALL PAYMENTS
@@ -62,9 +63,10 @@ export const getPaymentsByEventIdService = async (
   eventId: number
 ): Promise<TSelectPayment[]> => {
   return await db.query.payments.findMany({
-    where: (payments, { exists }) => 
+    where: (payments, { exists }) =>
       exists(
-        db.select()
+        db
+          .select()
           .from(bookings)
           .where(
             and(
@@ -190,10 +192,7 @@ export const getPaymentsByDateRangeService = async (
   endDate: Date
 ): Promise<TSelectPayment[]> => {
   return await db.query.payments.findMany({
-    where: and(
-      gte(payments.paymentDate, startDate),
-      lte(payments.paymentDate, endDate)
-    ),
+    where: and(gte(payments.paymentDate, startDate), lte(payments.paymentDate, endDate)),
     orderBy: [desc(payments.paymentDate)],
     with: {
       booking: true,
@@ -202,14 +201,14 @@ export const getPaymentsByDateRangeService = async (
 };
 
 // 🧮 Dynamic Fee-Splitting Calculator using the Organization's custom commission percentage
-export const calculatePaymentFees = (amount: number | string, commissionPercentage: number | string) => {
+export const calculatePaymentFees = (
+  amount: number | string,
+  commissionPercentage: number | string
+) => {
   const totalAmount = Number(amount);
   const commissionRate = Number(commissionPercentage);
-  
-  // 1. Calculate Admin Platform Fee based on the organization's unique commission rate
+
   const platformFee = Number((totalAmount * (commissionRate / 100)).toFixed(2));
-  
-  // 2. Calculate Net Amount for the Organizer's Dashboard
   const netAmount = Number((totalAmount - platformFee).toFixed(2));
 
   return {
@@ -220,15 +219,15 @@ export const calculatePaymentFees = (amount: number | string, commissionPercenta
 };
 
 // ==========================================
-// 13. CREATE A NEW PAYMENT & AUTO-FUND WALLET
+// 13. CREATE A NEW PAYMENT & AUTO-FUND WALLET (FINAL)
 // ==========================================
 export const createPaymentService = async (input: any) => {
-  return await db.transaction(async (tx) => {
-    // 1. Fetch the booking along with its related event using Drizzle relational queries ('with')
+  const newPayment = await db.transaction(async (tx) => {
+    // 1. Fetch the booking with its event (to get the orgId)
     const bookingRecord = await tx.query.bookings.findFirst({
       where: eq(bookings.bookingId, input.bookingId),
       with: {
-        event: true, // Fetches the related event to get the orgId
+        event: true,
       },
     });
 
@@ -236,7 +235,7 @@ export const createPaymentService = async (input: any) => {
       throw new Error(`Booking with ID ${input.bookingId} not found 🚫`);
     }
 
-    // 2. Resolve amount and organization ID safely from the fetched relation
+    // 2. Resolve amount and organization ID
     const paymentAmount = input.amount ?? bookingRecord.totalAmount;
     const organizationId = input.orgId ?? bookingRecord.event?.orgId;
 
@@ -244,57 +243,66 @@ export const createPaymentService = async (input: any) => {
       throw new Error(`Associated organization could not be found for booking ${input.bookingId} 🚫`);
     }
 
-    // 3. Calculate platform fee & net amount dynamically
-    const feePercentage = 0.05; // 5% platform fee (Adjust as needed)
+    // 3. Platform fee & net amount
+    const feePercentage = 0.05; // 5% platform fee (adjust as needed)
     const numericAmount = Number(paymentAmount);
     const platformFee = (numericAmount * feePercentage).toFixed(2);
     const netAmount = (numericAmount - Number(platformFee)).toFixed(2);
 
-    // 4. Insert the secure payment record
-    const [newPayment] = await tx.insert(payments).values({
-      bookingId: bookingRecord.bookingId,
-      orgId: organizationId,
-      digitalId: bookingRecord.digitalId,
-      amount: numericAmount.toFixed(2),
-      platformFee,
-      netAmount,
-      paymentMethod: input.paymentMethod,
-      paymentStatus: input.paymentStatus ?? "Completed", // Usually "Completed" when ticket is bought
-      transactionId: input.transactionId,
-    }).returning();
+    // 4. Insert the payment record
+    const [created] = await tx
+      .insert(payments)
+      .values({
+        bookingId: bookingRecord.bookingId,
+        orgId: organizationId,
+        digitalId: bookingRecord.digitalId,
+        amount: numericAmount.toFixed(2),
+        platformFee,
+        netAmount,
+        paymentMethod: input.paymentMethod,
+        paymentStatus: input.paymentStatus ?? "Completed",
+        transactionId: input.transactionId,
+      })
+      .returning();
 
-    // 5. Automatically Update or Create the Organizer's Wallet
-    // (Only fund the wallet if the payment is successfully completed)
-    if (newPayment.paymentStatus === "Completed") {
+    // 5. Fund the organizer's wallet (only if the payment is already Completed)
+    if (created.paymentStatus === "Completed") {
       const [existingWallet] = await tx
         .select()
         .from(wallets)
         .where(eq(wallets.orgId, organizationId));
 
       if (!existingWallet) {
-        // Create a wallet automatically if the org doesn't have one yet
         await tx.insert(wallets).values({
           orgId: organizationId,
           balance: netAmount,
           pendingBalance: "0.00",
-          currency: "KES", // Default currency, adjust if dynamic
+          currency: "KES",
         });
       } else {
-        // Increment the existing wallet balance with the net amount
         const currentBalance = Number(existingWallet.balance || 0);
         const newBalance = (currentBalance + Number(netAmount)).toFixed(2);
 
-        await tx.update(wallets)
-          .set({ 
-            balance: newBalance,
-            updatedAt: new Date() // <-- Fixed: Pass a Date object directly
-          })
+        await tx
+          .update(wallets)
+          .set({ balance: newBalance, updatedAt: new Date() })
           .where(eq(wallets.orgId, organizationId));
       }
     }
 
-    return newPayment;
+    return created;
   });
+
+  // 🎯 After the transaction: deduct stock, make ALL tickets, email them to the payer
+  if (newPayment.paymentStatus === "Completed" && newPayment.bookingId) {
+    try {
+      await confirmBookingAfterPayment(newPayment.bookingId);
+    } catch (err) {
+      console.error(`❌ Post-payment fulfilment failed for booking ${newPayment.bookingId}:`, err);
+    }
+  }
+
+  return newPayment;
 };
 
 // ==========================================
@@ -309,12 +317,13 @@ export const updatePaymentService = async (
     .set({ ...paymentData, updatedAt: new Date() })
     .where(eq(payments.paymentId, paymentId))
     .returning();
-    
+
   return updatedPayment;
 };
 
 // ==========================================
-// 15. UPDATE PAYMENT STATUS & TRANSACTION ID
+// 15. UPDATE PAYMENT STATUS & TRANSACTION ID (FINAL)
+//     M-Pesa and Stripe both go through here.
 // ==========================================
 export const updatePaymentStatusService = async (
   paymentId: number,
@@ -323,6 +332,8 @@ export const updatePaymentStatusService = async (
   resultCode?: string,
   resultDesc?: string
 ): Promise<TSelectPayment> => {
+  const [previous] = await db.select().from(payments).where(eq(payments.paymentId, paymentId));
+
   const [updatedPayment] = await db
     .update(payments)
     .set({
@@ -334,6 +345,16 @@ export const updatePaymentStatusService = async (
     })
     .where(eq(payments.paymentId, paymentId))
     .returning();
+
+  // 🎯 Only on the FIRST move to Completed: deduct stock, make tickets, email them
+  if (status === "Completed" && previous?.paymentStatus !== "Completed" && updatedPayment.bookingId) {
+    try {
+      await confirmBookingAfterPayment(updatedPayment.bookingId);
+    } catch (err) {
+      // Payment is saved. An admin can still set the booking to "Confirmed" to retry.
+      console.error(`❌ Post-payment fulfilment failed for booking ${updatedPayment.bookingId}:`, err);
+    }
+  }
 
   return updatedPayment;
 };
@@ -371,11 +392,7 @@ export const handleStripeWebhookService = async (
   const existingPayment = await getPaymentByStripeIntentService(stripePaymentIntentId);
   if (!existingPayment) return undefined;
 
-  return await updatePaymentStatusService(
-    existingPayment.paymentId,
-    status,
-    chargeId
-  );
+  return await updatePaymentStatusService(existingPayment.paymentId, status, chargeId);
 };
 
 // ==========================================
@@ -387,10 +404,9 @@ export const deletePaymentService = async (paymentId: number): Promise<string> =
 };
 
 // ==========================================
-// 19. CALCULATE TOTAL REVENUE FOR AN EVENT (Using relational 'with' query)
+// 19. CALCULATE TOTAL REVENUE FOR AN EVENT
 // ==========================================
 export const getEventTotalRevenueService = async (eventId: number): Promise<number> => {
-  // Fetch completed payments along with their related booking details
   const completedPayments = await db.query.payments.findMany({
     where: eq(payments.paymentStatus, "Completed"),
     with: {
@@ -398,12 +414,11 @@ export const getEventTotalRevenueService = async (eventId: number): Promise<numb
     },
   });
 
-  // Filter and sum up the amounts for payments belonging to the specified event
-  const totalRevenue = completedPayments.reduce((sum, payment) => {
+  const totalRevenue = completedPayments.reduce((total, payment) => {
     if (payment.booking && payment.booking.eventId === eventId) {
-      return sum + Number(payment.amount);
+      return total + Number(payment.amount);
     }
-    return sum;
+    return total;
   }, 0);
 
   return totalRevenue;
@@ -414,9 +429,7 @@ export const getEventTotalRevenueService = async (eventId: number): Promise<numb
 // ==========================================
 export const getPlatformTotalEarningsService = async (): Promise<number> => {
   const result = await db
-    .select({
-      totalPlatformFees: sum(payments.platformFee),
-    })
+    .select({ totalPlatformFees: sum(payments.platformFee) })
     .from(payments)
     .where(eq(payments.paymentStatus, "Completed"));
 
@@ -427,17 +440,14 @@ export const getPlatformTotalEarningsService = async (): Promise<number> => {
 // 21. GET TOTAL SUCCESSFUL PAYMENTS COUNT
 // ==========================================
 export const getSuccessfulPaymentsCountService = async (orgId?: number): Promise<number> => {
-  const query = db
-    .select({
-      count: count(payments.paymentId),
-    })
+  const result = await db
+    .select({ count: count(payments.paymentId) })
     .from(payments)
     .where(
-      orgId 
+      orgId
         ? and(eq(payments.paymentStatus, "Completed"), eq(payments.orgId, orgId))
         : eq(payments.paymentStatus, "Completed")
     );
 
-  const result = await query;
   return Number(result[0]?.count || 0);
 };

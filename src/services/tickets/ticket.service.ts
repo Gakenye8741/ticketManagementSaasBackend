@@ -1,70 +1,247 @@
-import { bookings, tickets, TInsertTicket, TSelectTicket, users, events } from "../../drizzle/schema";
+import { bookings, tickets, TSelectTicket, users } from "../../drizzle/schema";
 import { eq, and, count } from "drizzle-orm";
 import crypto from "node:crypto";
 import db from "../../drizzle/db";
 import { processAndEmailTicketService } from "../EmailTicket/emailTicket.Service";
 
 // ==========================================
-// 1. GENERATE TICKETS FOR A BOOKING (With Auto-Email Trigger)
+// GENERATE TICKETS FOR A BOOKING
+// ------------------------------------------
+// - Booking quantity 5 = exactly 5 tickets
+// - Every ticket initially belongs to the payer
+// - Tickets can later be assigned/transferred
+// - Idempotent: calling this multiple times will
+//   never intentionally create more than booking.quantity
+// - If ticket creation was interrupted, missing
+//   tickets are created on the next call
 // ==========================================
-export const generateTicketsForBooking = async (bookingId: number): Promise<TSelectTicket[]> => {
-  const [booking] = await db.select().from(bookings).where(eq(bookings.bookingId, bookingId));
-  if (!booking) throw new Error("Booking not found 🚫");
-  if (!booking.eventId) throw new Error("Event ID is missing for this booking 🚫");
 
-  // 1. Determine owner/holder details based on whether they logged in or used guest checkout
+export const generateTicketsForBooking = async (
+  bookingId: number
+): Promise<TSelectTicket[]> => {
+  // ------------------------------------------
+  // 1. Get booking
+  // ------------------------------------------
+  const [booking] = await db
+    .select()
+    .from(bookings)
+    .where(eq(bookings.bookingId, bookingId));
+
+  if (!booking) {
+    throw new Error("Booking not found 🚫");
+  }
+
+  if (!booking.eventId) {
+    throw new Error("Event ID is missing for this booking 🚫");
+  }
+
+  const quantity = Number(booking.quantity);
+
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error(
+      `Invalid booking quantity for booking ${bookingId}: ${booking.quantity}`
+    );
+  }
+
+  // ------------------------------------------
+  // 2. Check tickets that already exist
+  // ------------------------------------------
+  const existingTickets = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.bookingId, bookingId));
+
+  // If the correct number already exists,
+  // simply return them.
+  if (existingTickets.length >= quantity) {
+    console.log(
+      `🎟️ Booking ${bookingId} already has ${existingTickets.length}/${quantity} tickets.`
+    );
+
+    return existingTickets;
+  }
+
+  // ------------------------------------------
+  // 3. Determine the payer / initial owner
+  // ------------------------------------------
   let ownerName = booking.guestName;
   let ownerEmail = booking.guestEmail;
   let ownerPhone = booking.guestPhone;
-  let ownerDigitalId = booking.digitalId;
 
-  // If a digitalId exists, fetch the registered user's profile info to override/ensure accuracy
+  // Registered user gets priority over guest information
   if (booking.digitalId) {
-    const [userRecord] = await db.select().from(users).where(eq(users.digitalId, booking.digitalId));
+    const [userRecord] = await db
+      .select()
+      .from(users)
+      .where(eq(users.digitalId, booking.digitalId));
+
     if (userRecord) {
-      ownerName = userRecord.firstName && userRecord.lastName 
-        ? `${userRecord.firstName} ${userRecord.lastName}` 
-        : userRecord.firstName || ownerName;
+      ownerName =
+        userRecord.firstName && userRecord.lastName
+          ? `${userRecord.firstName} ${userRecord.lastName}`
+          : userRecord.firstName || ownerName;
+
       ownerEmail = userRecord.email || ownerEmail;
       ownerPhone = userRecord.contactPhone || ownerPhone;
     }
   }
 
-  const ticketsToInsert = [];
-  const groupBundleId = booking.quantity > 1 ? `BUNDLE-${crypto.randomUUID()}` : null;
+  // ------------------------------------------
+  // 4. Calculate how many tickets are missing
+  // ------------------------------------------
+  const missingTickets = quantity - existingTickets.length;
 
-  for (let i = 0; i < booking.quantity; i++) {
-    ticketsToInsert.push({
+  console.log(
+    `🎟️ Booking ${bookingId}: ${existingTickets.length}/${quantity} tickets exist.`
+  );
+
+  console.log(
+    `🎟️ Creating ${missingTickets} missing ticket(s) for booking ${bookingId}.`
+  );
+
+  // ------------------------------------------
+  // 5. Reuse existing bundle ID if one exists
+  // ------------------------------------------
+  //
+  // For example:
+  //
+  // Booking 100
+  // ├── Ticket 1 → BUNDLE-ABC
+  // ├── Ticket 2 → BUNDLE-ABC
+  // ├── Ticket 3 → BUNDLE-ABC
+  //
+  // This allows the tickets to remain associated
+  // as part of the same purchase.
+  //
+  let groupBundleId: string | null = null;
+
+  if (quantity > 1) {
+    groupBundleId =
+      existingTickets.find((ticket) => ticket.groupBundleId)
+        ?.groupBundleId ?? `BUNDLE-${crypto.randomUUID()}`;
+  }
+
+  // ------------------------------------------
+  // 6. Create ONLY the missing tickets
+  // ------------------------------------------
+  const ticketsToInsert = Array.from(
+    { length: missingTickets },
+    () => ({
       bookingId: booking.bookingId,
-      eventId: booking.eventId,
-      purchaserDigitalId: ownerDigitalId ?? null,
-      holderDigitalId: ownerDigitalId ?? null,
-      
-      ticketToken: `TKT-${crypto.randomBytes(16).toString("hex").toUpperCase()}`,
-      ticketNumber: `TNUM-${Math.floor(100000 + Math.random() * 900000)}`,
+      eventId: booking.eventId!,
+
+      // Original purchaser
+      purchaserDigitalId: booking.digitalId ?? null,
+
+      // Current holder
+      // Initially this is the payer.
+      digitalId: booking.digitalId ?? null,
+
+      // Every ticket gets its own unique token.
+      // This token should be what the QR code represents.
+      ticketToken: `TKT-${crypto
+        .randomBytes(16)
+        .toString("hex")
+        .toUpperCase()}`,
+
+      // Every ticket gets its own ticket number.
+      ticketNumber: `TNUM-${crypto
+        .randomBytes(6)
+        .toString("hex")
+        .toUpperCase()}`,
+
+      // All tickets purchased together share
+      // the same bundle ID.
       groupBundleId,
-      
-      isAssigned: booking.quantity === 1 ? true : false,
-      attendeeName: booking.quantity === 1 ? ownerName : null,
-      attendeeEmail: booking.quantity === 1 ? ownerEmail : null,
-      attendeePhone: booking.quantity === 1 ? ownerPhone : null,
-      
+
+      // Initially the payer owns all tickets.
+      isAssigned: true,
+
+      attendeeName: ownerName,
+      attendeeEmail: ownerEmail,
+      attendeePhone: ownerPhone,
+
+      // Nobody has been assigned/transferred yet.
       transferStatus: "unassigned",
-    });
+    })
+  );
+
+  // ------------------------------------------
+  // 7. Insert the missing tickets
+  // ------------------------------------------
+  let createdTickets: TSelectTicket[] = [];
+
+  if (ticketsToInsert.length > 0) {
+    createdTickets = await db
+      .insert(tickets)
+      .values(ticketsToInsert as any)
+      .returning();
+
+    console.log(
+      `✅ Created ${createdTickets.length} ticket(s) for booking ${bookingId}.`
+    );
   }
 
-  const createdTickets = await db.insert(tickets).values(ticketsToInsert as any).returning();
-  
-  // 🚀 Automatically trigger email dispatch and QR generation once tickets are generated
+  // ------------------------------------------
+  // 8. Get the COMPLETE ticket set
+  // ------------------------------------------
+  //
+  // This is important.
+  //
+  // If we created 3 missing tickets and 2
+  // already existed, the email service should
+  // receive all 5 tickets.
+  //
+  const allTickets = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.bookingId, bookingId));
+
+  console.log(
+    `🎟️ Booking ${bookingId} now has ${allTickets.length}/${quantity} ticket(s).`
+  );
+
+  // ------------------------------------------
+  // 9. Safety check
+  // ------------------------------------------
+  if (allTickets.length < quantity) {
+    console.error(
+      `⚠️ Ticket generation incomplete for booking ${bookingId}. ` +
+        `Expected ${quantity}, found ${allTickets.length}.`
+    );
+
+    throw new Error(
+      `Ticket generation incomplete. Expected ${quantity} tickets but found ${allTickets.length}.`
+    );
+  }
+
+  // ------------------------------------------
+  // 10. Email ALL tickets to the payer
+  // ------------------------------------------
+  //
+  // processAndEmailTicketService should retrieve
+  // all tickets belonging to this booking.
+  //
   try {
-    console.log(`📨 Triggering automated email ticket dispatch for booking ID: ${bookingId}`);
+    console.log(
+      `📨 Triggering ticket email for booking ID: ${bookingId}`
+    );
+
     await processAndEmailTicketService(bookingId);
-    console.log(`✅ Automated email dispatched successfully for booking ID: ${bookingId}`);
+
+    console.log(
+      `✅ Ticket email dispatched for booking ID: ${bookingId}`
+    );
   } catch (emailError: any) {
-    console.error(`❌ Failed to send automated ticket email for booking ID ${bookingId}:`, emailError.message);
+    // Ticket creation should NOT be rolled back
+    // just because email delivery failed.
+    console.error(
+      `❌ Failed to send ticket email for booking ID ${bookingId}:`,
+      emailError?.message || emailError
+    );
   }
 
-  return createdTickets;
+  return allTickets;
 };
 
 // ==========================================
@@ -115,7 +292,7 @@ export const getTicketsByPurchaserId = async (purchaserDigitalId: number): Promi
 // 8. ASSIGN TICKET TO AN ATTENDEE
 // ==========================================
 export const assignTicket = async (
-  ticketId: number, 
+  ticketId: number,
   attendeeData: { name: string; email: string; phone?: string }
 ): Promise<TSelectTicket> => {
   const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketId, ticketId));
@@ -141,7 +318,7 @@ export const assignTicket = async (
 // 9. BULK ASSIGN BUNDLE TICKETS
 // ==========================================
 export const bulkAssignBundleTickets = async (
-  groupBundleId: string, 
+  groupBundleId: string,
   assignments: Array<{ ticketId: number; name: string; email: string; phone?: string }>
 ): Promise<TSelectTicket[]> => {
   const updatedTickets: TSelectTicket[] = [];
@@ -169,7 +346,10 @@ export const bulkAssignBundleTickets = async (
 // ==========================================
 // 10. INITIATE TICKET TRANSFER
 // ==========================================
-export const initiateTicketTransfer = async (ticketId: number, holderId: number): Promise<{ ticket: TSelectTicket; claimToken: string }> => {
+export const initiateTicketTransfer = async (
+  ticketId: number,
+  holderId: number
+): Promise<{ ticket: TSelectTicket; claimToken: string }> => {
   const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketId, ticketId));
   if (!ticket) throw new Error("Ticket not found 🚫");
   if (ticket.digitalId !== holderId) throw new Error("Unauthorized: You do not own this ticket 🛡️");
@@ -195,8 +375,8 @@ export const initiateTicketTransfer = async (ticketId: number, holderId: number)
 // 11. CLAIM TRANSFERRED TICKET
 // ==========================================
 export const claimTransferredTicket = async (
-  claimToken: string, 
-  newHolderDigitalId: number, 
+  claimToken: string,
+  newHolderDigitalId: number,
   attendeeInfo: { name: string; email: string; phone?: string }
 ): Promise<TSelectTicket> => {
   const [ticket] = await db.select().from(tickets).where(eq(tickets.claimToken, claimToken));
@@ -229,17 +409,19 @@ export const claimTransferredTicket = async (
 // ==========================================
 // 12. SCAN TICKET AT GATE
 // ==========================================
-export const scanTicket = async (ticketToken: string): Promise<{ success: boolean; message: string; ticket?: TSelectTicket }> => {
+export const scanTicket = async (
+  ticketToken: string
+): Promise<{ success: boolean; message: string; ticket?: TSelectTicket }> => {
   const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketToken, ticketToken));
   if (!ticket) {
     return { success: false, message: "Ticket token not found or invalid ❌" };
   }
 
   if (ticket.isScanned) {
-    return { 
-      success: false, 
-      message: `Ticket already scanned at gate on ${ticket.scannedAt?.toLocaleString() || 'previous check-in'} ⚠️`,
-      ticket 
+    return {
+      success: false,
+      message: `Ticket already scanned at gate on ${ticket.scannedAt?.toLocaleString() || "previous check-in"} ⚠️`,
+      ticket,
     };
   }
 
@@ -293,10 +475,7 @@ export const getTicketsByBundleId = async (groupBundleId: string): Promise<TSele
 // 15. COUNT TOTAL TICKETS FOR EVENT
 // ==========================================
 export const countEventTickets = async (eventId: number): Promise<number> => {
-  const [result] = await db
-    .select({ count: count() })
-    .from(tickets)
-    .where(eq(tickets.eventId, eventId));
+  const [result] = await db.select({ count: count() }).from(tickets).where(eq(tickets.eventId, eventId));
   return result?.count ?? 0;
 };
 

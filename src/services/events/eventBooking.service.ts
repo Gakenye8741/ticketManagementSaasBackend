@@ -1,4 +1,4 @@
-import { eq, inArray, desc, ilike, and } from "drizzle-orm";
+import { eq, inArray, desc, ilike, and, sql, gte } from "drizzle-orm";
 import db from "../../drizzle/db";
 import {
   events,
@@ -11,6 +11,7 @@ import {
 } from "../../drizzle/schema";
 import { processAndEmailTicketService } from "../EmailTicket/emailTicket.Service";
 import { getVerificationByUserId } from "../verification/verification.service";
+import { generateTicketsForBooking } from "../tickets/ticket.service";
 
 // Export types for controllers and validators
 export type { TInsertEvent, TSelectEvent, TSelectBooking };
@@ -213,6 +214,10 @@ export const getEventBySlug = async (slug: string) => {
 // PART 2: BOOKINGS SERVICES (12 - 20)
 // ==========================================
 
+
+// How long an UNPAID booking reserves tickets (without deducting them)
+const HOLD_MINUTES = 15;
+
 // 12. 📋 Get all bookings
 export const getAllBookingsService = async (): Promise<TSelectBooking[]> => {
   return await db.query.bookings.findMany({
@@ -298,9 +303,28 @@ export interface CreateBookingPayload {
   idempotencyKey?: string;
 }
 
+// 🔒 Tickets held by unpaid bookings that are still inside the hold window
+const getReservedCount = async (ticketTypeId: number): Promise<number> => {
+  const since = new Date(Date.now() - HOLD_MINUTES * 60 * 1000);
+  const [row] = await db
+    .select({ reserved: sql<number>`COALESCE(SUM(${bookings.quantity}), 0)` })
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.ticketTypeId, ticketTypeId),
+        eq(bookings.bookingStatus, "Pending"),
+        gte(bookings.createdAt, since)
+      )
+    );
+  return Number(row?.reserved ?? 0);
+};
 
 export const createBookingService = async (payload: CreateBookingPayload) => {
-  // 1. Fetch ticket type by ticketTypeId and ensure it matches the eventId
+  if (!Number.isInteger(payload.quantity) || payload.quantity < 1) {
+    return { success: false, message: "Quantity must be a whole number of at least 1" };
+  }
+
+  // 1. Fetch ticket type and make sure it belongs to the event
   const [ticketTier] = await db
     .select()
     .from(ticketTypes)
@@ -318,22 +342,21 @@ export const createBookingService = async (payload: CreateBookingPayload) => {
     };
   }
 
-  // 2. Calculate remaining stock using schema fields (total quantity - sold count)
-  const currentSold = ticketTier.sold ?? 0;
-  const remainingStock = ticketTier.quantity - currentSold;
+  // 2. Remaining = total - already PAID (sold) - held by other unpaid bookings
+  const reserved = await getReservedCount(ticketTier.ticketTypeId);
+  const remainingStock = ticketTier.quantity - (ticketTier.sold ?? 0) - reserved;
 
   if (remainingStock < payload.quantity) {
     return {
       success: false,
-      message: `Insufficient tickets available. Remaining stock: ${remainingStock}`,
+      message: `Insufficient tickets available. Remaining stock: ${Math.max(remainingStock, 0)}`,
     };
   }
 
-  // 3. Automatically calculate total amount server-side
-  const unitPrice = Number(ticketTier.price);
-  const calculatedTotal = (unitPrice * payload.quantity).toFixed(2);
+  // 3. Total is always calculated on the server
+  const calculatedTotal = (Number(ticketTier.price) * payload.quantity).toFixed(2);
 
-  // 4. Insert booking with auto-fetched name and auto-computed details
+  // 4. Insert the booking as Pending
   const [newBooking] = await db
     .insert(bookings)
     .values({
@@ -351,46 +374,77 @@ export const createBookingService = async (payload: CreateBookingPayload) => {
     })
     .returning();
 
-  // 5. Update the sold count on the ticket type table
-  await db
-    .update(ticketTypes)
-    .set({ sold: currentSold + payload.quantity })
-    .where(eq(ticketTypes.ticketTypeId, ticketTier.ticketTypeId));
-
-  return {
-    success: true,
-    data: newBooking,
-  };
+  // ❌ REMOVED: the "sold" update. Stock is only deducted once payment completes.
+  return { success: true, data: newBooking };
 };
 
-// 18. 🔄 Update booking status (with safety checks and automation trigger)
+// ✅ Called when a payment completes. Safe to call more than once.
+// Deducts stock, marks the booking Confirmed, generates ALL tickets, emails them to the payer.
+export const confirmBookingAfterPayment = async (bookingId: number) => {
+  const { alreadyConfirmed } = await db.transaction(async (tx) => {
+    // Lock the row so two callbacks can't both deduct stock
+    const [booking] = await tx
+      .select()
+      .from(bookings)
+      .where(eq(bookings.bookingId, bookingId))
+      .for("update");
+
+    if (!booking) throw new Error(`Booking ${bookingId} not found 🔍`);
+    if (booking.bookingStatus === "Confirmed") return { alreadyConfirmed: true };
+
+    const [tier] = await tx
+      .update(ticketTypes)
+      .set({ sold: sql`COALESCE(${ticketTypes.sold}, 0) + ${booking.quantity}` })
+      .where(eq(ticketTypes.ticketTypeId, booking.ticketTypeId!))
+      .returning();
+
+    // The customer already paid, so we honour it, but flag it for you
+    if (tier && (tier.sold ?? 0) > tier.quantity) {
+      console.warn(`⚠️ Ticket type ${tier.ticketTypeId} oversold after booking ${bookingId}`);
+    }
+
+    await tx
+      .update(bookings)
+      .set({ bookingStatus: "Confirmed", updatedAt: new Date() })
+      .where(eq(bookings.bookingId, bookingId));
+
+    return { alreadyConfirmed: false };
+  });
+
+  // Generates the tickets and emails them (outside the transaction)
+  if (!alreadyConfirmed) await generateTicketsForBooking(bookingId);
+  return { alreadyConfirmed };
+};
+
+// 🔙 Gives tickets back if a PAID booking is cancelled or refunded
+const releaseStockIfConfirmed = async (bookingId: number, previousStatus: string) => {
+  if (previousStatus !== "Confirmed") return;
+  const [booking] = await db.select().from(bookings).where(eq(bookings.bookingId, bookingId));
+  if (!booking?.ticketTypeId) return;
+  await db
+    .update(ticketTypes)
+    .set({ sold: sql`GREATEST(COALESCE(${ticketTypes.sold}, 0) - ${booking.quantity}, 0)` })
+    .where(eq(ticketTypes.ticketTypeId, booking.ticketTypeId));
+};
+
+// 18. 🔄 Update booking status
 export const updateBookingStatusService = async (
   bookingId: number,
   bookingStatus: "Pending" | "Confirmed" | "Cancelled" | "Refunded"
 ): Promise<string> => {
-  // 1. Verify the booking exists
-  const [existingBooking] = await db
-    .select()
-    .from(bookings)
-    .where(eq(bookings.bookingId, bookingId));
+  const [existing] = await db.select().from(bookings).where(eq(bookings.bookingId, bookingId));
+  if (!existing) throw new Error(`Booking with ID ${bookingId} not found 🔍`);
 
-  if (!existingBooking) {
-    throw new Error(`Booking with ID ${bookingId} not found 🔍`);
-  }
+  if (bookingStatus === "Confirmed") {
+    await confirmBookingAfterPayment(bookingId); // deducts stock + makes tickets + emails
+  } else {
+    await db
+      .update(bookings)
+      .set({ bookingStatus, updatedAt: new Date() })
+      .where(eq(bookings.bookingId, bookingId));
 
-  // 2. Perform the update
-  await db
-    .update(bookings)
-    .set({ bookingStatus, updatedAt: new Date() })
-    .where(eq(bookings.bookingId, bookingId));
-
-  // 3. Optional Bonus: If manually confirmed and it wasn't confirmed before, send tickets out!
-  if (bookingStatus === "Confirmed" && existingBooking.bookingStatus !== "Confirmed") {
-    try {
-      await processAndEmailTicketService(bookingId);
-      console.log(`📨 Ticket & Email dispatched successfully for manually confirmed booking ID: ${bookingId}`);
-    } catch (emailError) {
-      console.error("❌ Failed to process ticket email upon manual status confirmation:", emailError);
+    if (bookingStatus === "Cancelled" || bookingStatus === "Refunded") {
+      await releaseStockIfConfirmed(bookingId, existing.bookingStatus);
     }
   }
 
@@ -399,11 +453,15 @@ export const updateBookingStatusService = async (
 
 // 19. ❌ Cancel booking
 export const cancelBookingService = async (bookingId: number): Promise<string> => {
+  const [existing] = await db.select().from(bookings).where(eq(bookings.bookingId, bookingId));
+  if (!existing) throw new Error(`Booking with ID ${bookingId} not found 🔍`);
+
   await db
     .update(bookings)
     .set({ bookingStatus: "Cancelled", updatedAt: new Date() })
     .where(eq(bookings.bookingId, bookingId));
-  
+
+  await releaseStockIfConfirmed(bookingId, existing.bookingStatus);
   return "Booking cancelled successfully ❌";
 };
 
