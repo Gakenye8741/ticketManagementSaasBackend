@@ -291,15 +291,30 @@ export const getRecentBookingsService = async (limitNum: number = 10): Promise<T
 };
 
 // 17. ➕ Create a new booking
+export interface BookingAttendee {
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}
+
 export interface CreateBookingPayload {
   eventId: number;
   ticketTypeId: number;
-  ticketTypeName?: string; // Optional since the service fetches it
+  ticketTypeName?: string;
   quantity: number;
+
+  // Logged-in user / payer
   digitalId?: number;
+
+  // Payer / primary attendee
   guestName?: string;
   guestEmail?: string;
   guestPhone?: string;
+
+  // Individual attendee details for each ticket
+  attendees?: BookingAttendee[];
+
+  // Prevent duplicate bookings
   idempotencyKey?: string;
 }
 
@@ -321,7 +336,10 @@ const getReservedCount = async (ticketTypeId: number): Promise<number> => {
 
 export const createBookingService = async (payload: CreateBookingPayload) => {
   if (!Number.isInteger(payload.quantity) || payload.quantity < 1) {
-    return { success: false, message: "Quantity must be a whole number of at least 1" };
+    return {
+      success: false,
+      message: "Quantity must be a whole number of at least 1",
+    };
   }
 
   // 1. Fetch ticket type and make sure it belongs to the event
@@ -344,19 +362,50 @@ export const createBookingService = async (payload: CreateBookingPayload) => {
 
   // 2. Remaining = total - already PAID (sold) - held by other unpaid bookings
   const reserved = await getReservedCount(ticketTier.ticketTypeId);
-  const remainingStock = ticketTier.quantity - (ticketTier.sold ?? 0) - reserved;
+
+  const remainingStock =
+    ticketTier.quantity - (ticketTier.sold ?? 0) - reserved;
 
   if (remainingStock < payload.quantity) {
     return {
       success: false,
-      message: `Insufficient tickets available. Remaining stock: ${Math.max(remainingStock, 0)}`,
+      message: `Insufficient tickets available. Remaining stock: ${Math.max(
+        remainingStock,
+        0
+      )}`,
     };
   }
 
   // 3. Total is always calculated on the server
-  const calculatedTotal = (Number(ticketTier.price) * payload.quantity).toFixed(2);
+  const calculatedTotal = (
+    Number(ticketTier.price) * payload.quantity
+  ).toFixed(2);
 
-  // 4. Insert the booking as Pending
+  // 4. Save attendee details with the booking
+  //
+  // Example:
+  // [
+  //   {
+  //     name: "Gakenye Ndiritu",
+  //     email: "gakenye@gmail.com",
+  //     phone: "0712345678"
+  //   },
+  //   {
+  //     name: "Brian Kimurgor",
+  //     email: "brian@gmail.com",
+  //     phone: "0723456789"
+  //   }
+  // ]
+  //
+  // If no attendee details are provided, attendees will be null
+  // and ticket generation will fall back to the payer details.
+
+  const attendees =
+    payload.attendees && payload.attendees.length > 0
+      ? payload.attendees
+      : null;
+
+  // 5. Insert the booking as Pending
   const [newBooking] = await db
     .insert(bookings)
     .values({
@@ -365,17 +414,28 @@ export const createBookingService = async (payload: CreateBookingPayload) => {
       ticketTypeName: ticketTier.name,
       quantity: payload.quantity,
       totalAmount: calculatedTotal,
+
+      // Payer / primary customer
       digitalId: payload.digitalId ?? null,
       guestName: payload.guestName ?? null,
       guestEmail: payload.guestEmail ?? null,
       guestPhone: payload.guestPhone ?? null,
+
+      // Individual attendees
+      attendees,
+
       bookingStatus: "Pending",
       idempotencyKey: payload.idempotencyKey ?? null,
     })
     .returning();
 
-  // ❌ REMOVED: the "sold" update. Stock is only deducted once payment completes.
-  return { success: true, data: newBooking };
+  // ❌ REMOVED: the "sold" update.
+  // Stock is only deducted once payment completes.
+
+  return {
+    success: true,
+    data: newBooking,
+  };
 };
 
 // ✅ Called when a payment completes. Safe to call more than once.

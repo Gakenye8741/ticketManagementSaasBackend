@@ -435,27 +435,53 @@ export const getRecentBookings: RequestHandler = async (req, res) => {
 export const createBooking: RequestHandler = async (req, res) => {
   try {
     const parseResult = createBookingValidator.safeParse(req.body);
+
     if (!parseResult.success) {
-      res.status(400).json({ success: false, error: parseResult.error.issues });
+      res.status(400).json({
+        success: false,
+        error: parseResult.error.issues,
+      });
       return;
     }
 
-    const resolvedDigitalId = parseResult.data.digitalId ?? req.user?.userId;
+    const resolvedDigitalId =
+      parseResult.data.digitalId ?? req.user?.userId;
 
     const payload = {
       eventId: parseResult.data.eventId,
       ticketTypeId: parseResult.data.ticketTypeId,
       quantity: parseResult.data.quantity,
-      digitalId: resolvedDigitalId !== null && resolvedDigitalId !== undefined ? resolvedDigitalId : undefined,
-      
-      guestName: parseResult.data.guestName ?? (req.user as any)?.name ?? undefined,
-      guestEmail: parseResult.data.guestEmail ?? req.user?.email ?? undefined,
-      guestPhone: parseResult.data.guestPhone ?? (req.user as any)?.phone ?? undefined,
-      
-      idempotencyKey: parseResult.data.idempotencyKey ?? undefined,
+
+      digitalId:
+        resolvedDigitalId !== null && resolvedDigitalId !== undefined
+          ? resolvedDigitalId
+          : undefined,
+
+      // Payer / primary attendee
+      guestName:
+        parseResult.data.guestName ??
+        (req.user as any)?.name ??
+        undefined,
+
+      guestEmail:
+        parseResult.data.guestEmail ??
+        req.user?.email ??
+        undefined,
+
+      guestPhone:
+        parseResult.data.guestPhone ??
+        (req.user as any)?.phone ??
+        undefined,
+
+      // Individual attendees for each ticket
+      attendees: parseResult.data.attendees ?? undefined,
+
+      idempotencyKey:
+        parseResult.data.idempotencyKey ?? undefined,
     };
 
     const result = await createBookingService(payload);
+
     if (!result.success) {
       res.status(400).json(result);
       return;
@@ -463,12 +489,17 @@ export const createBooking: RequestHandler = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Booking initialized successfully using Ticket ID! Ready for payment processing 💳🎫",
+      message:
+        "Booking initialized successfully using Ticket ID! Ready for payment processing 💳🎫",
       data: result.data,
     });
   } catch (error: any) {
     console.error("[CREATE_BOOKING_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to create booking" });
+
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to create booking",
+    });
   }
 };
 

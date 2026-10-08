@@ -71,3 +71,21 @@ export const deleteVenueByIdServices = async(venueId: number, orgId: number): Pr
     .where(and(eq(venues.venueId, venueId), eq(venues.orgId, orgId)));
   return "User Deleted SuccessFully ❌";
 }
+
+// Get Venue by Id (PUBLIC: for attendees viewing an event page, not scoped to an organizer)
+export const getPublicVenueByIdService = async (venueId: number) => {
+  const [venue] = await db
+    .select({
+      venueId: venues.venueId,
+      name: venues.name,
+      
+      address: venues.address,
+      capacity: venues.capacity,
+      
+    })
+    .from(venues)
+    .where(eq(venues.venueId, venueId))
+    .limit(1);
+
+  return venue; // undefined if not found
+};

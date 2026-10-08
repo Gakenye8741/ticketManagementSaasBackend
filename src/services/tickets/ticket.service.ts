@@ -14,6 +14,8 @@ import { processAndEmailTicketService } from "../EmailTicket/emailTicket.Service
 //   never intentionally create more than booking.quantity
 // - If ticket creation was interrupted, missing
 //   tickets are created on the next call
+// - Each ticket uses its corresponding attendee
+//   from booking.attendees when available
 // ==========================================
 
 export const generateTicketsForBooking = async (
@@ -87,7 +89,29 @@ export const generateTicketsForBooking = async (
   }
 
   // ------------------------------------------
-  // 4. Calculate how many tickets are missing
+  // 4. Get individual attendee details
+  // ------------------------------------------
+  //
+  // Booking attendees are mapped to tickets by index:
+  //
+  // attendees[0] -> Ticket 1
+  // attendees[1] -> Ticket 2
+  // attendees[2] -> Ticket 3
+  // ...
+  //
+  // If an attendee is missing, the payer details
+  // are used as a fallback.
+  //
+  const attendees = Array.isArray(booking.attendees)
+    ? booking.attendees
+    : [];
+
+  console.log(
+    `👥 Booking ${bookingId}: ${attendees.length}/${quantity} attendee detail(s) found.`
+  );
+
+  // ------------------------------------------
+  // 5. Calculate how many tickets are missing
   // ------------------------------------------
   const missingTickets = quantity - existingTickets.length;
 
@@ -100,7 +124,7 @@ export const generateTicketsForBooking = async (
   );
 
   // ------------------------------------------
-  // 5. Reuse existing bundle ID if one exists
+  // 6. Reuse existing bundle ID if one exists
   // ------------------------------------------
   //
   // For example:
@@ -122,52 +146,110 @@ export const generateTicketsForBooking = async (
   }
 
   // ------------------------------------------
-  // 6. Create ONLY the missing tickets
+  // 7. Create ONLY the missing tickets
   // ------------------------------------------
+  //
+  // IMPORTANT:
+  //
+  // We use the ticket's original position in the
+  // booking to select the correct attendee.
+  //
+  // Example:
+  //
+  // quantity = 2
+  // existingTickets = 0
+  //
+  // Ticket 1 -> attendees[0]
+  // Ticket 2 -> attendees[1]
+  //
+  // If one ticket already exists:
+  //
+  // existingTickets = 1
+  //
+  // New Ticket -> attendees[1]
+  //
   const ticketsToInsert = Array.from(
     { length: missingTickets },
-    () => ({
-      bookingId: booking.bookingId,
-      eventId: booking.eventId!,
+    (_, index) => {
+      const attendeeIndex = existingTickets.length + index;
 
-      // Original purchaser
-      purchaserDigitalId: booking.digitalId ?? null,
+      const attendee = attendees[attendeeIndex];
 
-      // Current holder
-      // Initially this is the payer.
-      digitalId: booking.digitalId ?? null,
+      // ------------------------------------------
+      // Individual attendee details
+      // ------------------------------------------
+      //
+      // Use the attendee information supplied for
+      // this specific ticket.
+      //
+      // Fall back to the payer if no attendee
+      // information is available.
+      //
+      const attendeeName =
+        typeof attendee?.name === "string" && attendee.name.trim()
+          ? attendee.name.trim()
+          : ownerName;
 
-      // Every ticket gets its own unique token.
-      // This token should be what the QR code represents.
-      ticketToken: `TKT-${crypto
-        .randomBytes(16)
-        .toString("hex")
-        .toUpperCase()}`,
+      const attendeeEmail =
+        typeof attendee?.email === "string" && attendee.email.trim()
+          ? attendee.email.trim()
+          : ownerEmail;
 
-      // Every ticket gets its own ticket number.
-      ticketNumber: `TNUM-${crypto
-        .randomBytes(6)
-        .toString("hex")
-        .toUpperCase()}`,
+      const attendeePhone =
+        typeof attendee?.phone === "string" && attendee.phone.trim()
+          ? attendee.phone.trim()
+          : ownerPhone;
 
-      // All tickets purchased together share
-      // the same bundle ID.
-      groupBundleId,
+      console.log(
+        `🎟️ Preparing ticket ${attendeeIndex + 1}/${quantity} for booking ${bookingId} → ${attendeeEmail}`
+      );
 
-      // Initially the payer owns all tickets.
-      isAssigned: true,
+      return {
+        bookingId: booking.bookingId,
+        eventId: booking.eventId!,
 
-      attendeeName: ownerName,
-      attendeeEmail: ownerEmail,
-      attendeePhone: ownerPhone,
+        // Original purchaser
+        purchaserDigitalId: booking.digitalId ?? null,
 
-      // Nobody has been assigned/transferred yet.
-      transferStatus: "unassigned",
-    })
+        // Current holder
+        // Initially this is the payer.
+        digitalId: booking.digitalId ?? null,
+
+        // Every ticket gets its own unique token.
+        // This token should be what the QR code represents.
+        ticketToken: `TKT-${crypto
+          .randomBytes(16)
+          .toString("hex")
+          .toUpperCase()}`,
+
+        // Every ticket gets its own ticket number.
+        ticketNumber: `TNUM-${crypto
+          .randomBytes(6)
+          .toString("hex")
+          .toUpperCase()}`,
+
+        // All tickets purchased together share
+        // the same bundle ID.
+        groupBundleId,
+
+        // Initially the payer owns all tickets.
+        isAssigned: true,
+
+        // ------------------------------------------
+        // Individual attendee details
+        // ------------------------------------------
+        attendeeName,
+        attendeeEmail,
+        attendeePhone,
+
+        // Nobody has been assigned/transferred yet.
+        transferStatus: "unassigned",
+      };
+    }
   );
 
   // ------------------------------------------
-  // 7. Insert the missing tickets
+  // 8. Insert the missing tickets
   // ------------------------------------------
   let createdTickets: TSelectTicket[] = [];
 
@@ -183,7 +265,7 @@ export const generateTicketsForBooking = async (
   }
 
   // ------------------------------------------
-  // 8. Get the COMPLETE ticket set
+  // 9. Get the COMPLETE ticket set
   // ------------------------------------------
   //
   // This is important.
@@ -202,7 +284,7 @@ export const generateTicketsForBooking = async (
   );
 
   // ------------------------------------------
-  // 9. Safety check
+  // 10. Safety check
   // ------------------------------------------
   if (allTickets.length < quantity) {
     console.error(
@@ -216,11 +298,15 @@ export const generateTicketsForBooking = async (
   }
 
   // ------------------------------------------
-  // 10. Email ALL tickets to the payer
+  // 11. Email ALL tickets
   // ------------------------------------------
   //
   // processAndEmailTicketService should retrieve
   // all tickets belonging to this booking.
+  //
+  // Ticket 1 -> attendee 1 email
+  // Ticket 2 -> attendee 2 email
+  // Ticket 3 -> attendee 3 email
   //
   try {
     console.log(
@@ -247,45 +333,77 @@ export const generateTicketsForBooking = async (
 // ==========================================
 // 2. GET TICKET BY ID
 // ==========================================
-export const getTicketById = async (ticketId: number): Promise<TSelectTicket | undefined> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketId, ticketId));
+export const getTicketById = async (
+  ticketId: number
+): Promise<TSelectTicket | undefined> => {
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketId, ticketId));
+
   return ticket;
 };
 
 // ==========================================
 // 3. GET TICKET BY TOKEN
 // ==========================================
-export const getTicketByToken = async (ticketToken: string): Promise<TSelectTicket | undefined> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketToken, ticketToken));
+export const getTicketByToken = async (
+  ticketToken: string
+): Promise<TSelectTicket | undefined> => {
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketToken, ticketToken));
+
   return ticket;
 };
 
 // ==========================================
 // 4. GET TICKETS BY BOOKING ID
 // ==========================================
-export const getTicketsByBookingId = async (bookingId: number): Promise<TSelectTicket[]> => {
-  return await db.select().from(tickets).where(eq(tickets.bookingId, bookingId));
+export const getTicketsByBookingId = async (
+  bookingId: number
+): Promise<TSelectTicket[]> => {
+  return await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.bookingId, bookingId));
 };
 
 // ==========================================
 // 5. GET TICKETS BY EVENT ID
 // ==========================================
-export const getTicketsByEventId = async (eventId: number): Promise<TSelectTicket[]> => {
-  return await db.select().from(tickets).where(eq(tickets.eventId, eventId));
+export const getTicketsByEventId = async (
+  eventId: number
+): Promise<TSelectTicket[]> => {
+  return await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.eventId, eventId));
 };
 
 // ==========================================
 // 6. GET TICKETS BY HOLDER ID
 // ==========================================
-export const getTicketsByHolderId = async (digitalId: number): Promise<TSelectTicket[]> => {
-  return await db.select().from(tickets).where(eq(tickets.digitalId, digitalId));
+export const getTicketsByHolderId = async (
+  digitalId: number
+): Promise<TSelectTicket[]> => {
+  return await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.digitalId, digitalId));
 };
 
 // ==========================================
 // 7. GET TICKETS BY PURCHASER ID
 // ==========================================
-export const getTicketsByPurchaserId = async (purchaserDigitalId: number): Promise<TSelectTicket[]> => {
-  return await db.select().from(tickets).where(eq(tickets.purchaserDigitalId, purchaserDigitalId));
+export const getTicketsByPurchaserId = async (
+  purchaserDigitalId: number
+): Promise<TSelectTicket[]> => {
+  return await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.purchaserDigitalId, purchaserDigitalId));
 };
 
 // ==========================================
@@ -295,7 +413,11 @@ export const assignTicket = async (
   ticketId: number,
   attendeeData: { name: string; email: string; phone?: string }
 ): Promise<TSelectTicket> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketId, ticketId));
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketId, ticketId));
+
   if (!ticket) throw new Error("Ticket not found 🚫");
 
   const [updated] = await db
@@ -319,7 +441,12 @@ export const assignTicket = async (
 // ==========================================
 export const bulkAssignBundleTickets = async (
   groupBundleId: string,
-  assignments: Array<{ ticketId: number; name: string; email: string; phone?: string }>
+  assignments: Array<{
+    ticketId: number;
+    name: string;
+    email: string;
+    phone?: string;
+  }>
 ): Promise<TSelectTicket[]> => {
   const updatedTickets: TSelectTicket[] = [];
 
@@ -334,7 +461,12 @@ export const bulkAssignBundleTickets = async (
         transferStatus: "pending_claim",
         updatedAt: new Date(),
       })
-      .where(and(eq(tickets.ticketId, item.ticketId), eq(tickets.groupBundleId, groupBundleId)))
+      .where(
+        and(
+          eq(tickets.ticketId, item.ticketId),
+          eq(tickets.groupBundleId, groupBundleId)
+        )
+      )
       .returning();
 
     if (updated) updatedTickets.push(updated);
@@ -350,11 +482,22 @@ export const initiateTicketTransfer = async (
   ticketId: number,
   holderId: number
 ): Promise<{ ticket: TSelectTicket; claimToken: string }> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketId, ticketId));
-  if (!ticket) throw new Error("Ticket not found 🚫");
-  if (ticket.digitalId !== holderId) throw new Error("Unauthorized: You do not own this ticket 🛡️");
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketId, ticketId));
 
-  const claimToken = `CLAIM-${crypto.randomBytes(20).toString("hex").toUpperCase()}`;
+  if (!ticket) throw new Error("Ticket not found 🚫");
+
+  if (ticket.digitalId !== holderId) {
+    throw new Error("Unauthorized: You do not own this ticket 🛡️");
+  }
+
+  const claimToken = `CLAIM-${crypto
+    .randomBytes(20)
+    .toString("hex")
+    .toUpperCase()}`;
+
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
   const [updated] = await db
@@ -379,10 +522,17 @@ export const claimTransferredTicket = async (
   newHolderDigitalId: number,
   attendeeInfo: { name: string; email: string; phone?: string }
 ): Promise<TSelectTicket> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.claimToken, claimToken));
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.claimToken, claimToken));
+
   if (!ticket) throw new Error("Invalid or expired claim token 🚫");
 
-  if (ticket.claimTokenExpiresAt && new Date() > new Date(ticket.claimTokenExpiresAt)) {
+  if (
+    ticket.claimTokenExpiresAt &&
+    new Date() > new Date(ticket.claimTokenExpiresAt)
+  ) {
     throw new Error("This transfer claim link has expired ⌛");
   }
 
@@ -411,16 +561,29 @@ export const claimTransferredTicket = async (
 // ==========================================
 export const scanTicket = async (
   ticketToken: string
-): Promise<{ success: boolean; message: string; ticket?: TSelectTicket }> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketToken, ticketToken));
+): Promise<{
+  success: boolean;
+  message: string;
+  ticket?: TSelectTicket;
+}> => {
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketToken, ticketToken));
+
   if (!ticket) {
-    return { success: false, message: "Ticket token not found or invalid ❌" };
+    return {
+      success: false,
+      message: "Ticket token not found or invalid ❌",
+    };
   }
 
   if (ticket.isScanned) {
     return {
       success: false,
-      message: `Ticket already scanned at gate on ${ticket.scannedAt?.toLocaleString() || "previous check-in"} ⚠️`,
+      message: `Ticket already scanned at gate on ${
+        ticket.scannedAt?.toLocaleString() || "previous check-in"
+      } ⚠️`,
       ticket,
     };
   }
@@ -435,16 +598,31 @@ export const scanTicket = async (
     .where(eq(tickets.ticketId, ticket.ticketId))
     .returning();
 
-  return { success: true, message: "Ticket verified and checked in successfully ✅🎫", ticket: scannedTicket };
+  return {
+    success: true,
+    message: "Ticket verified and checked in successfully ✅🎫",
+    ticket: scannedTicket,
+  };
 };
 
 // ==========================================
 // 13. UNASSIGN TICKET
 // ==========================================
-export const unassignTicket = async (ticketId: number, ownerId: number): Promise<TSelectTicket> => {
-  const [ticket] = await db.select().from(tickets).where(eq(tickets.ticketId, ticketId));
+export const unassignTicket = async (
+  ticketId: number,
+  ownerId: number
+): Promise<TSelectTicket> => {
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketId, ticketId));
+
   if (!ticket) throw new Error("Ticket not found 🚫");
-  if (ticket.purchaserDigitalId !== ownerId && ticket.digitalId !== ownerId) {
+
+  if (
+    ticket.purchaserDigitalId !== ownerId &&
+    ticket.digitalId !== ownerId
+  ) {
     throw new Error("Unauthorized to modify this ticket 🛡️");
   }
 
@@ -467,50 +645,83 @@ export const unassignTicket = async (ticketId: number, ownerId: number): Promise
 // ==========================================
 // 14. GET TICKETS BY BUNDLE ID
 // ==========================================
-export const getTicketsByBundleId = async (groupBundleId: string): Promise<TSelectTicket[]> => {
-  return await db.select().from(tickets).where(eq(tickets.groupBundleId, groupBundleId));
+export const getTicketsByBundleId = async (
+  groupBundleId: string
+): Promise<TSelectTicket[]> => {
+  return await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.groupBundleId, groupBundleId));
 };
 
 // ==========================================
 // 15. COUNT TOTAL TICKETS FOR EVENT
 // ==========================================
-export const countEventTickets = async (eventId: number): Promise<number> => {
-  const [result] = await db.select({ count: count() }).from(tickets).where(eq(tickets.eventId, eventId));
+export const countEventTickets = async (
+  eventId: number
+): Promise<number> => {
+  const [result] = await db
+    .select({ count: count() })
+    .from(tickets)
+    .where(eq(tickets.eventId, eventId));
+
   return result?.count ?? 0;
 };
 
 // ==========================================
 // 16. COUNT SCANNED ATTENDEES
 // ==========================================
-export const countScannedAttendees = async (eventId: number): Promise<number> => {
+export const countScannedAttendees = async (
+  eventId: number
+): Promise<number> => {
   const [result] = await db
     .select({ count: count() })
     .from(tickets)
-    .where(and(eq(tickets.eventId, eventId), eq(tickets.isScanned, true)));
+    .where(
+      and(
+        eq(tickets.eventId, eventId),
+        eq(tickets.isScanned, true)
+      )
+    );
+
   return result?.count ?? 0;
 };
 
 // ==========================================
 // 17. UPDATE TICKET HOLDER
 // ==========================================
-export const updateTicketHolder = async (ticketId: number, newDigitalId: number): Promise<TSelectTicket> => {
+export const updateTicketHolder = async (
+  ticketId: number,
+  newDigitalId: number
+): Promise<TSelectTicket> => {
   const [updated] = await db
     .update(tickets)
-    .set({ digitalId: newDigitalId, updatedAt: new Date() })
+    .set({
+      digitalId: newDigitalId,
+      updatedAt: new Date(),
+    })
     .where(eq(tickets.ticketId, ticketId))
     .returning();
+
   return updated;
 };
 
 // ==========================================
 // 18. RESET TICKET SCAN
 // ==========================================
-export const resetTicketScan = async (ticketId: number): Promise<TSelectTicket> => {
+export const resetTicketScan = async (
+  ticketId: number
+): Promise<TSelectTicket> => {
   const [updated] = await db
     .update(tickets)
-    .set({ isScanned: false, scannedAt: null, updatedAt: new Date() })
+    .set({
+      isScanned: false,
+      scannedAt: null,
+      updatedAt: new Date(),
+    })
     .where(eq(tickets.ticketId, ticketId))
     .returning();
+
   return updated;
 };
 
@@ -518,16 +729,27 @@ export const resetTicketScan = async (ticketId: number): Promise<TSelectTicket> 
 // 19. DELETE TICKET RECORD
 // ==========================================
 export const deleteTicket = async (ticketId: number): Promise<boolean> => {
-  const result = await db.delete(tickets).where(eq(tickets.ticketId, ticketId)).returning();
+  const result = await db
+    .delete(tickets)
+    .where(eq(tickets.ticketId, ticketId))
+    .returning();
+
   return result.length > 0;
 };
 
 // ==========================================
 // 20. GET UNASSIGNED USER TICKETS
 // ==========================================
-export const getUnassignedUserTickets = async (digitalId: number): Promise<TSelectTicket[]> => {
+export const getUnassignedUserTickets = async (
+  digitalId: number
+): Promise<TSelectTicket[]> => {
   return await db
     .select()
     .from(tickets)
-    .where(and(eq(tickets.digitalId, digitalId), eq(tickets.isAssigned, false)));
+    .where(
+      and(
+        eq(tickets.digitalId, digitalId),
+        eq(tickets.isAssigned, false)
+      )
+    );
 };

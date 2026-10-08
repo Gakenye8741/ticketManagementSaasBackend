@@ -421,27 +421,65 @@ export const mpesaLogs = pgTable("mpesa_logs", {
 
 export const bookings = pgTable("bookings", {
   bookingId: serial("bookingId").primaryKey(),
-  digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "set null" }),
+
+  digitalId: integer("digitalId")
+    .references(() => users.digitalId, { onDelete: "set null" }),
+
+  // Payer / primary customer details
   guestName: varchar("guestName", { length: 255 }),
   guestEmail: varchar("guestEmail", { length: 255 }),
   guestPhone: varchar("guestPhone", { length: 20 }),
-  eventId: integer("eventId").references(() => events.eventId, { onDelete: "cascade" }),
-  ticketTypeId: integer("ticketTypeId").references(() => ticketTypes.ticketTypeId),
+
+  // Individual attendee details for each ticket
+  attendees: jsonb("attendees"),
+
+  eventId: integer("eventId")
+    .references(() => events.eventId, { onDelete: "cascade" }),
+
+  ticketTypeId: integer("ticketTypeId")
+    .references(() => ticketTypes.ticketTypeId),
+
   ticketTypeName: varchar("ticketTypeName", { length: 100 }),
+
   quantity: integer("quantity").notNull(),
-  isBundle: boolean("isBundle").default(false).notNull(),
-  totalAmount: decimal("totalAmount", { precision: 10, scale: 2 }).notNull(),
-  bookingStatus: bookingStatusEnum("bookingStatus").default("Pending").notNull(),
+
+  isBundle: boolean("isBundle")
+    .default(false)
+    .notNull(),
+
+  totalAmount: decimal("totalAmount", {
+    precision: 10,
+    scale: 2,
+  }).notNull(),
+
+  bookingStatus: bookingStatusEnum("bookingStatus")
+    .default("Pending")
+    .notNull(),
+
   checkoutRequestId: text("checkout_request_id").unique(),
-  idempotencyKey: varchar("idempotencyKey", { length: 255 }).unique(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+
+  idempotencyKey: varchar("idempotencyKey", {
+    length: 255,
+  }).unique(),
+
+  createdAt: timestamp("createdAt")
+    .defaultNow()
+    .notNull(),
+
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull(),
 }, (table) => {
   return {
     userIdx: index("booking_user_idx").on(table.digitalId),
+
     eventIdx: index("booking_event_idx").on(table.eventId),
-    checkoutReqIdx: index("booking_checkout_req_idx").on(table.checkoutRequestId),
-    idempotencyIdx: index("booking_idempotency_idx").on(table.idempotencyKey),
+
+    checkoutReqIdx: index("booking_checkout_req_idx")
+      .on(table.checkoutRequestId),
+
+    idempotencyIdx: index("booking_idempotency_idx")
+      .on(table.idempotencyKey),
   };
 });
 

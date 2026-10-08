@@ -86,7 +86,6 @@ export const updateEventStatusValidator = z.object({
 
 
 
-
 export const createBookingValidator = z.object({
   eventId: z
     .number({ required_error: "Event ID is required" })
@@ -107,6 +106,7 @@ export const createBookingValidator = z.object({
     .optional()
     .nullable(),
 
+  // Payer / primary customer
   guestName: z
     .string()
     .trim()
@@ -127,30 +127,72 @@ export const createBookingValidator = z.object({
     .optional()
     .nullable(),
 
+  // Individual attendee details for each ticket
+  attendees: z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .trim()
+          .max(255)
+          .optional()
+          .nullable(),
+
+        email: z
+          .string()
+          .trim()
+          .email("Invalid attendee email format")
+          .optional()
+          .nullable(),
+
+        phone: z
+          .string()
+          .trim()
+          .max(20)
+          .optional()
+          .nullable(),
+      })
+    )
+    .optional()
+    .nullable(),
+
   idempotencyKey: z
     .string()
     .trim()
     .max(255)
     .optional()
     .nullable(),
-}).refine((data) => {
-  const hasDigitalId = data.digitalId !== undefined && data.digitalId !== null;
-  
-  if (!hasDigitalId) {
-    return !!data.guestName && !!data.guestEmail && !!data.guestPhone;
+}).refine(
+  (data) => {
+    const hasDigitalId =
+      data.digitalId !== undefined &&
+      data.digitalId !== null;
+
+    if (!hasDigitalId) {
+      return (
+        !!data.guestName &&
+        !!data.guestEmail &&
+        !!data.guestPhone
+      );
+    }
+
+    return true;
+  },
+  {
+    message:
+      "Guest name, email, and phone number are required for guest checkouts when not logged in 📝",
+    path: ["guestEmail"],
   }
-  return true;
-}, {
-  message: "Guest name, email, and phone number are required for guest checkouts when not logged in 📝",
-  path: ["guestEmail"],
-});
+);
 
 export const updateBookingStatusValidator = z.object({
-    bookingStatus: z.enum(["Pending", "Confirmed", "Cancelled", "Refunded"], {
-        required_error: "Booking status is required",
-    }),
+  bookingStatus: z.enum(
+    ["Pending", "Confirmed", "Cancelled", "Refunded"],
+    {
+      required_error: "Booking status is required",
+    }
+  ),
 });
-
 
 // ==========================================
 // 🔤 TYPE EXPORTS FOR CONTROLLERS & SERVICES
@@ -158,7 +200,14 @@ export const updateBookingStatusValidator = z.object({
 
 export type TCreateEvent = z.infer<typeof createEventValidator>;
 export type TUpdateEvent = z.infer<typeof updateEventValidator>;
-export type TUpdateEventStatus = z.infer<typeof updateEventStatusValidator>;
+export type TUpdateEventStatus = z.infer<
+  typeof updateEventStatusValidator
+>;
 
-export type TCreateBooking = z.infer<typeof createBookingValidator>;
-export type TUpdateBookingStatus = z.infer<typeof updateBookingStatusValidator>;
+export type TCreateBooking = z.infer<
+  typeof createBookingValidator
+>;
+
+export type TUpdateBookingStatus = z.infer<
+  typeof updateBookingStatusValidator
+>;

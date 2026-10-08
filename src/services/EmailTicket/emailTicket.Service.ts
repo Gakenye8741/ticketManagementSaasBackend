@@ -29,7 +29,6 @@ export const processAndEmailTicketService = async (bookingId: number) => {
       user: true,
       payments: true,
 
-      // IMPORTANT:
       // Get ALL tickets belonging to this booking.
       tickets: true,
     },
@@ -51,17 +50,17 @@ export const processAndEmailTicketService = async (bookingId: number) => {
       : undefined;
 
   // ==========================================
-  // 2. Resolve recipient details
+  // 2. Resolve primary booking recipient
   // ==========================================
-  const recipientEmail = user?.email || bookingRecord.guestEmail;
+  const bookingEmail = user?.email || bookingRecord.guestEmail;
 
-  const recipientFirstName =
+  const bookingFirstName =
     user?.firstName ||
     (bookingRecord.guestName
       ? bookingRecord.guestName.split(" ")[0]
       : "Valued");
 
-  const recipientLastName =
+  const bookingLastName =
     user?.lastName ||
     (bookingRecord.guestName
       ? bookingRecord.guestName.split(" ").slice(1).join(" ")
@@ -70,7 +69,7 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   // ==========================================
   // 3. Validate required booking information
   // ==========================================
-  if (!event || !ticketType || !recipientEmail) {
+  if (!event || !ticketType || !bookingEmail) {
     throw new Error(
       "Incomplete booking relations (Event, TicketType, or Guest/User Contact missing)."
     );
@@ -85,14 +84,14 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   const actualTicketCount = bookingTickets.length;
 
   console.log(
-    `🎟️ Preparing email for booking ${bookingId}: ` +
+    `🎟️ Preparing emails for booking ${bookingId}: ` +
       `${actualTicketCount}/${expectedQuantity} ticket(s) found.`
   );
 
-  // Do not send an incomplete ticket email.
+  // Do not send incomplete ticket emails.
   if (actualTicketCount < expectedQuantity) {
     throw new Error(
-      `Cannot send ticket email for booking ${bookingId}. ` +
+      `Cannot send ticket emails for booking ${bookingId}. ` +
         `Expected ${expectedQuantity} ticket(s), but only ${actualTicketCount} exist.`
     );
   }
@@ -111,17 +110,30 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   ).replace(/\/$/, "");
 
   // ==========================================
-  // 6. Build individual ticket links
+  // 6. Event/payment information
+  // ==========================================
+  const venueName = venue
+    ? `${venue.name}, ${venue.address}`
+    : event.category || "Laikipia University Grounds";
+
+  const eventDateTime = `${event.date} @ ${event.time}`;
+
+  const totalAmountFormatted = Number(
+    bookingRecord.totalAmount
+  ).toLocaleString("en-KE");
+
+  // ==========================================
+  // 7. Build ticket information
   // ==========================================
   //
-  // Every ticket has its own:
+  // Every ticket now has its own:
   //
+  // attendeeName
+  // attendeeEmail
   // ticketToken
-  //     ↓
-  // /tickets/view/TKT-XXXX
+  // ticketNumber
   //
-  // This means every ticket can have its own
-  // QR code and can be scanned independently.
+  // Each attendee will receive ONLY their own ticket.
   //
   const ticketLinks = bookingTickets.map((ticket, index) => {
     if (!ticket.ticketToken) {
@@ -140,385 +152,442 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   });
 
   // ==========================================
-  // 7. Event/payment information
+  // 8. Send individual email to EACH attendee
   // ==========================================
-  const venueName = venue
-    ? `${venue.name}, ${venue.address}`
-    : event.category || "Laikipia University Grounds";
+  const emailResults: Array<{
+    ticketId: number;
+    email: string;
+    success: boolean;
+    ticketViewUrl: string;
+  }> = [];
 
-  const eventDateTime = `${event.date} @ ${event.time}`;
+  for (const { ticket, index, ticketViewUrl } of ticketLinks) {
+    // ------------------------------------------
+    // Resolve attendee email
+    // ------------------------------------------
+    //
+    // Prefer the email stored on the individual
+    // ticket.
+    //
+    // If it does not exist, fall back to the
+    // primary booking email.
+    //
+    const attendeeEmail =
+      (ticket as any).attendeeEmail ||
+      bookingEmail;
 
-  const totalAmountFormatted = Number(
-    bookingRecord.totalAmount
-  ).toLocaleString("en-KE");
+    const attendeeName =
+      (ticket as any).attendeeName ||
+      bookingRecord.guestName ||
+      `${bookingFirstName} ${bookingLastName}`;
 
-  // ==========================================
-  // 8. Generate individual ticket cards
-  // ==========================================
-  const ticketCardsHtml = ticketLinks
-    .map(
-      ({ ticket, index, ticketViewUrl }) => `
-        <div
-          style="
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 14px;
-            padding: 18px;
-            margin: 16px 0;
-          "
-        >
-          <div
-            style="
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              margin-bottom: 12px;
-            "
-          >
-            <div>
-              <h3
-                style="
-                  margin: 0;
-                  font-size: 15px;
-                  color: #1e293b;
-                "
-              >
-                🎟️ Ticket ${index}
-              </h3>
+    const attendeeFirstName =
+      attendeeName.split(" ")[0] || bookingFirstName;
 
-              <p
-                style="
-                  margin: 4px 0 0;
-                  font-size: 11px;
-                  color: #64748b;
-                "
-              >
-                ${ticket.ticketNumber || `Ticket ${index}`}
-              </p>
-            </div>
-
-            <span
-              style="
-                background: #eef2ff;
-                color: #4f46e5;
-                padding: 5px 9px;
-                border-radius: 999px;
-                font-size: 10px;
-                font-weight: bold;
-              "
-            >
-              VALID PASS
-            </span>
-          </div>
-
-          <p
-            style="
-              font-size: 12px;
-              color: #475569;
-              margin: 8px 0;
-            "
-          >
-            <strong>Holder:</strong>
-            ${ticket.attendeeName || recipientFirstName}
-          </p>
-
-          <div style="text-align: center; margin: 18px 0 10px;">
-            <a
-              href="${ticketViewUrl}"
-              target="_blank"
-              style="
-                background-color: #4f46e5;
-                color: #ffffff;
-                padding: 12px 22px;
-                font-size: 13px;
-                font-weight: bold;
-                text-decoration: none;
-                border-radius: 8px;
-                display: inline-block;
-              "
-            >
-              🎟️ View Ticket ${index} & QR
-            </a>
-          </div>
-
-          <p
-            style="
-              font-size: 10px;
-              color: #94a3b8;
-              font-family: monospace;
-              margin: 8px 0 0;
-              word-break: break-all;
-              text-align: center;
-            "
-          >
-            ${ticketViewUrl}
-          </p>
-        </div>
-      `
-    )
-    .join("");
-
-  // ==========================================
-  // 9. Complete email HTML
-  // ==========================================
-  const htmlContent = `
-    <div
-      style="
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-        background-color: #f4f4f5;
-        padding: 30px;
-        color: #18181b;
-      "
-    >
+    // ------------------------------------------
+    // Build individual attendee email
+    // ------------------------------------------
+    const individualTicketHtml = `
       <div
         style="
-          max-width: 600px;
-          margin: 0 auto;
           background: #ffffff;
-          border-radius: 16px;
-          overflow: hidden;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+          border: 1px solid #e2e8f0;
+          border-radius: 14px;
+          padding: 18px;
+          margin: 16px 0;
         "
       >
-
-        <!-- Header -->
         <div
           style="
-            background: #4f46e5;
-            color: #ffffff;
-            padding: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+          "
+        >
+          <div>
+            <h3
+              style="
+                margin: 0;
+                font-size: 15px;
+                color: #1e293b;
+              "
+            >
+              🎟️ Your Ticket
+            </h3>
+
+            <p
+              style="
+                margin: 4px 0 0;
+                font-size: 11px;
+                color: #64748b;
+              "
+            >
+              ${(ticket as any).ticketNumber || `Ticket ${index}`}
+            </p>
+          </div>
+
+          <span
+            style="
+              background: #eef2ff;
+              color: #4f46e5;
+              padding: 5px 9px;
+              border-radius: 999px;
+              font-size: 10px;
+              font-weight: bold;
+            "
+          >
+            VALID PASS
+          </span>
+        </div>
+
+        <p
+          style="
+            font-size: 12px;
+            color: #475569;
+            margin: 8px 0;
+          "
+        >
+          <strong>Holder:</strong>
+          ${attendeeName}
+        </p>
+
+        <p
+          style="
+            font-size: 12px;
+            color: #475569;
+            margin: 8px 0;
+          "
+        >
+          <strong>Ticket:</strong>
+          ${index} of ${expectedQuantity}
+        </p>
+
+        <div style="text-align: center; margin: 22px 0 12px;">
+          <a
+            href="${ticketViewUrl}"
+            target="_blank"
+            style="
+              background-color: #4f46e5;
+              color: #ffffff;
+              padding: 12px 22px;
+              font-size: 13px;
+              font-weight: bold;
+              text-decoration: none;
+              border-radius: 8px;
+              display: inline-block;
+            "
+          >
+            🎟️ View My Ticket & QR
+          </a>
+        </div>
+
+        <p
+          style="
+            font-size: 10px;
+            color: #94a3b8;
+            font-family: monospace;
+            margin: 8px 0 0;
+            word-break: break-all;
             text-align: center;
           "
         >
-          <h1
-            style="
-              margin: 0;
-              font-size: 20px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-            "
-          >
-            TicketStream Verified Pass
-          </h1>
+          ${ticketViewUrl}
+        </p>
+      </div>
+    `;
 
-          <p
-            style="
-              margin: 4px 0 0;
-              font-size: 12px;
-              opacity: 0.8;
-            "
-          >
-            Official Payment & Booking Confirmation
-          </p>
-        </div>
+    // ==========================================
+    // Complete individual email HTML
+    // ==========================================
+    const htmlContent = `
+      <div
+        style="
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          background-color: #f4f4f5;
+          padding: 30px;
+          color: #18181b;
+        "
+      >
+        <div
+          style="
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+          "
+        >
 
-        <!-- Body -->
-        <div style="padding: 24px;">
-
-          <p
-            style="
-              font-size: 14px;
-              margin-top: 0;
-            "
-          >
-            Hello
-            <strong>
-              ${recipientFirstName} ${recipientLastName}
-            </strong>,
-          </p>
-
-          <p
-            style="
-              font-size: 14px;
-              color: #3f3f46;
-            "
-          >
-            Your payment has been successfully processed.
-            Your ${expectedQuantity} ticket${
-    expectedQuantity === 1 ? "" : "s"
-  } ${
-    expectedQuantity === 1 ? "is" : "are"
-  } ready for admission.
-          </p>
-
-          <!-- Event Details -->
+          <!-- Header -->
           <div
             style="
-              background: #f8fafc;
-              border: 1px solid #e2e8f0;
-              border-radius: 12px;
-              padding: 16px;
-              margin: 20px 0;
+              background: #4f46e5;
+              color: #ffffff;
+              padding: 24px;
+              text-align: center;
             "
           >
-            <h2
+            <h1
               style="
-                margin: 0 0 10px;
-                font-size: 16px;
-                color: #1e293b;
+                margin: 0;
+                font-size: 20px;
                 text-transform: uppercase;
+                letter-spacing: 1px;
               "
             >
-              ${event.title}
-            </h2>
+              TicketStream Verified Pass
+            </h1>
 
             <p
               style="
-                margin: 4px 0;
-                font-size: 13px;
-                color: #475569;
+                margin: 4px 0 0;
+                font-size: 12px;
+                opacity: 0.8;
               "
             >
-              <strong>📅 Date & Time:</strong>
-              ${eventDateTime}
-            </p>
-
-            <p
-              style="
-                margin: 4px 0;
-                font-size: 13px;
-                color: #475569;
-              "
-            >
-              <strong>📍 Venue:</strong>
-              ${venueName}
-            </p>
-
-            <p
-              style="
-                margin: 4px 0;
-                font-size: 13px;
-                color: #475569;
-              "
-            >
-              <strong>🎟️ Ticket Tier:</strong>
-              ${ticketType.name} (x${expectedQuantity})
-            </p>
-
-            <p
-              style="
-                margin: 4px 0;
-                font-size: 13px;
-                color: #475569;
-              "
-            >
-              <strong>💳 Total Cleared:</strong>
-              KSH ${totalAmountFormatted}
-            </p>
-
-            <p
-              style="
-                margin: 4px 0;
-                font-size: 13px;
-                color: #475569;
-                word-break: break-all;
-              "
-            >
-              <strong>🆔 Transaction ID:</strong>
-              #${payment?.transactionId || "N/A"}
+              Official Payment & Booking Confirmation
             </p>
           </div>
 
-          <!-- Ticket Section -->
-          <div style="margin-top: 24px;">
-
-            <h2
-              style="
-                font-size: 17px;
-                color: #1e293b;
-                margin-bottom: 8px;
-              "
-            >
-              🎟️ Your Tickets
-            </h2>
+          <!-- Body -->
+          <div style="padding: 24px;">
 
             <p
               style="
-                font-size: 12px;
-                color: #64748b;
+                font-size: 14px;
                 margin-top: 0;
               "
             >
-              Each ticket has its own secure QR code and can be
-              scanned independently at the gate.
+              Hello
+              <strong>${attendeeFirstName}</strong>,
             </p>
 
-            ${ticketCardsHtml}
-
-          </div>
-
-          <!-- Security Notice -->
-          <div
-            style="
-              background: #fefce8;
-              border: 1px solid #fde68a;
-              border-radius: 10px;
-              padding: 12px;
-              margin-top: 20px;
-            "
-          >
             <p
               style="
-                margin: 0;
-                font-size: 11px;
-                color: #713f12;
-                line-height: 1.5;
+                font-size: 14px;
+                color: #3f3f46;
+                line-height: 1.6;
               "
             >
-              🔐 Keep each ticket link secure. Each QR code represents
-              an individual admission ticket and can only be used once.
+              Your ticket for
+              <strong>${event.title}</strong>
+              has been successfully confirmed.
+              Your secure gate pass is ready.
             </p>
+
+            <!-- Event Details -->
+            <div
+              style="
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 16px;
+                margin: 20px 0;
+              "
+            >
+              <h2
+                style="
+                  margin: 0 0 10px;
+                  font-size: 16px;
+                  color: #1e293b;
+                  text-transform: uppercase;
+                "
+              >
+                ${event.title}
+              </h2>
+
+              <p
+                style="
+                  margin: 4px 0;
+                  font-size: 13px;
+                  color: #475569;
+                "
+              >
+                <strong>📅 Date & Time:</strong>
+                ${eventDateTime}
+              </p>
+
+              <p
+                style="
+                  margin: 4px 0;
+                  font-size: 13px;
+                  color: #475569;
+                "
+              >
+                <strong>📍 Venue:</strong>
+                ${venueName}
+              </p>
+
+              <p
+                style="
+                  margin: 4px 0;
+                  font-size: 13px;
+                  color: #475569;
+                "
+              >
+                <strong>🎟️ Ticket Tier:</strong>
+                ${ticketType.name}
+              </p>
+
+              <p
+                style="
+                  margin: 4px 0;
+                  font-size: 13px;
+                  color: #475569;
+                "
+              >
+                <strong>🎫 Ticket Number:</strong>
+                ${(ticket as any).ticketNumber || `Ticket ${index}`}
+              </p>
+
+              <p
+                style="
+                  margin: 4px 0;
+                  font-size: 13px;
+                  color: #475569;
+                  word-break: break-all;
+                "
+              >
+                <strong>🆔 Transaction ID:</strong>
+                #${payment?.transactionId || "N/A"}
+              </p>
+            </div>
+
+            <!-- Individual Ticket -->
+            <div style="margin-top: 24px;">
+
+              <h2
+                style="
+                  font-size: 17px;
+                  color: #1e293b;
+                  margin-bottom: 8px;
+                "
+              >
+                🎟️ Your Ticket
+              </h2>
+
+              <p
+                style="
+                  font-size: 12px;
+                  color: #64748b;
+                  margin-top: 0;
+                  line-height: 1.5;
+                "
+              >
+                This ticket belongs to you.
+                Keep your ticket link secure and present
+                the QR code at the gate.
+              </p>
+
+              ${individualTicketHtml}
+
+            </div>
+
+            <!-- Security Notice -->
+            <div
+              style="
+                background: #fefce8;
+                border: 1px solid #fde68a;
+                border-radius: 10px;
+                padding: 12px;
+                margin-top: 20px;
+              "
+            >
+              <p
+                style="
+                  margin: 0;
+                  font-size: 11px;
+                  color: #713f12;
+                  line-height: 1.5;
+                "
+              >
+                🔐 Keep your ticket link secure.
+                This QR code represents your individual
+                admission ticket and can only be used once.
+              </p>
+            </div>
+
+            <!-- Footer -->
+            <p
+              style="
+                font-size: 12px;
+                color: #71717a;
+                text-align: center;
+                margin-top: 30px;
+                border-top: 1px solid #e4e4e7;
+                padding-top: 16px;
+              "
+            >
+              Thank you for using TicketStream Systems.
+              Keep your ticket secure for gate admission.
+            </p>
+
           </div>
-
-          <!-- Footer -->
-          <p
-            style="
-              font-size: 12px;
-              color: #71717a;
-              text-align: center;
-              margin-top: 30px;
-              border-top: 1px solid #e4e4e7;
-              padding-top: 16px;
-            "
-          >
-            Thank you for using TicketStream Systems.
-            Keep your ticket links secure for gate admission.
-          </p>
-
         </div>
       </div>
-    </div>
-  `;
+    `;
 
-  // ==========================================
-  // 10. Send ONE email containing ALL tickets
-  // ==========================================
-  const emailSent = await sendEmail(
-    recipientEmail,
-    `Your ${expectedQuantity} Verified Ticket${
-      expectedQuantity === 1 ? "" : "s"
-    }: ${event.title}`,
-    recipientFirstName,
-    `Your booking for ${event.title} has been confirmed. You purchased ${expectedQuantity} ticket${
-      expectedQuantity === 1 ? "" : "s"
-    }. Each ticket has its own secure gate-pass link.`,
-    htmlContent
-  );
+    // ==========================================
+    // Send email to this attendee
+    // ==========================================
+    console.log(
+      `📧 Sending ticket ${index}/${expectedQuantity} ` +
+        `to ${attendeeEmail} for booking ${bookingId}...`
+    );
 
-  if (!emailSent) {
-    throw new Error(
-      `Failed to dispatch confirmation email to ${recipientEmail}`
+    const emailSent = await sendEmail(
+      attendeeEmail,
+      `Your Ticket: ${event.title}`,
+      attendeeFirstName,
+      `Your ticket for ${event.title} has been confirmed. Your secure gate-pass link is ready.`,
+      htmlContent
+    );
+
+    if (!emailSent) {
+      console.error(
+        `❌ Failed to send ticket ${index} email to ${attendeeEmail}`
+      );
+
+      emailResults.push({
+        ticketId: ticket.ticketId,
+        email: attendeeEmail,
+        success: false,
+        ticketViewUrl,
+      });
+
+      throw new Error(
+        `Failed to dispatch ticket email to ${attendeeEmail} for ticket ${ticket.ticketId}.`
+      );
+    }
+
+    emailResults.push({
+      ticketId: ticket.ticketId,
+      email: attendeeEmail,
+      success: true,
+      ticketViewUrl,
+    });
+
+    console.log(
+      `✅ Ticket ${index}/${expectedQuantity} email sent to ${attendeeEmail}.`
     );
   }
 
+  // ==========================================
+  // 9. Final result
+  // ==========================================
   console.log(
-    `✅ Email sent to ${recipientEmail} with ${bookingTickets.length} ticket(s) for booking ${bookingId}.`
+    `✅ All ${bookingTickets.length} ticket email(s) sent successfully ` +
+      `for booking ${bookingId}.`
   );
 
   return {
-    message: "All tickets processed and email dispatched successfully!",
+    message: "All attendee ticket emails dispatched successfully!",
     bookingId,
     ticketCount: bookingTickets.length,
+    emailsSent: emailResults.length,
+    emailResults,
     ticketLinks: ticketLinks.map((item) => item.ticketViewUrl),
   };
 };

@@ -165,3 +165,39 @@ export const deleteVenueController = async (req: Request, res: Response) => {
     return res.status(500).json({ error: error.message || "Internal server error" });
   }
 };
+
+import { getPublicVenueByIdService } from "./venue.service"; // adjust to your service file path
+
+// PUBLIC: get a venue by its id (used by the event details page)
+export const getPublicVenueByIdController = async (req: Request, res: Response) => {
+  try {
+    const venueId = Number(req.params.venueId);
+
+    if (!Number.isInteger(venueId) || venueId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid venue id",
+      });
+    }
+
+    const venue = await getPublicVenueByIdService(venueId);
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: "Venue not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Venue retrieved successfully ✨",
+      data: venue,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to retrieve venue",
+    });
+  }
+};
