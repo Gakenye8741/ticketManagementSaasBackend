@@ -246,7 +246,11 @@ export const getBookingByIdService = async (
   });
 };
 
-// 14. 👤 Get bookings by User (digitalId)
+
+/* ==========================================
+ * 14. 👤 Get bookings by User (digitalId)
+ * ========================================== */
+
 export const getBookingsByUserIdService = async (
   digitalId: number
 ): Promise<TSelectBooking[]> => {
@@ -260,9 +264,11 @@ export const getBookingsByUserIdService = async (
         },
       },
       payments: true,
+      tickets: true,
     },
   });
 };
+
 
 // 15. 🎟️ Get bookings by Event ID
 export const getBookingsByEventIdService = async (

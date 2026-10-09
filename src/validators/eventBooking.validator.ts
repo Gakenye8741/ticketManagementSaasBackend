@@ -80,110 +80,120 @@ export const updateEventStatusValidator = z.object({
 });
 
 
-// ==========================================
-// 🎫 BOOKING VALIDATORS
-// ==========================================
 
+/* ==========================================
+ * 🎫 BOOKING VALIDATORS
+ * ========================================== */
 
+export const createBookingValidator = z
+  .object({
+    eventId: z
+      .number({ required_error: "Event ID is required" })
+      .int("Event ID must be an integer")
+      .positive("Event ID must be greater than zero"),
 
-export const createBookingValidator = z.object({
-  eventId: z
-    .number({ required_error: "Event ID is required" })
-    .int("Event ID must be an integer"),
+    ticketTypeId: z
+      .number({ required_error: "Ticket Type ID is required" })
+      .int("Ticket Type ID must be an integer")
+      .positive("Ticket Type ID must be greater than zero"),
 
-  ticketTypeId: z
-    .number({ required_error: "Ticket Type ID is required" })
-    .int("Ticket Type ID must be an integer"),
+    quantity: z
+      .number({ required_error: "Quantity is required" })
+      .int("Quantity must be a whole number")
+      .min(1, "Quantity must be at least 1"),
 
-  quantity: z
-    .number({ required_error: "Quantity is required" })
-    .int("Quantity must be a whole number")
-    .min(1, "Quantity must be at least 1"),
+    digitalId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .nullable(),
 
-  digitalId: z
-    .number()
-    .int()
-    .optional()
-    .nullable(),
+    // Payer / primary customer
+    guestName: z
+      .string()
+      .trim()
+      .min(1, "Guest name cannot be empty")
+      .max(255)
+      .optional()
+      .nullable(),
 
-  // Payer / primary customer
-  guestName: z
-    .string()
-    .trim()
-    .max(255)
-    .optional()
-    .nullable(),
+    guestEmail: z
+      .string()
+      .trim()
+      .email("Invalid guest email format")
+      .optional()
+      .nullable(),
 
-  guestEmail: z
-    .string()
-    .trim()
-    .email("Invalid guest email format")
-    .optional()
-    .nullable(),
+    guestPhone: z
+      .string()
+      .trim()
+      .min(1, "Guest phone cannot be empty")
+      .max(20)
+      .optional()
+      .nullable(),
 
-  guestPhone: z
-    .string()
-    .trim()
-    .optional()
-    .nullable(),
+    // Individual attendee details for each ticket
+    attendees: z
+      .array(
+        z.object({
+          name: z
+            .string()
+            .trim()
+            .min(1, "Attendee name cannot be empty")
+            .max(255)
+            .optional()
+            .nullable(),
 
-  // Individual attendee details for each ticket
-  attendees: z
-    .array(
-      z.object({
-        name: z
-          .string()
-          .trim()
-          .max(255)
-          .optional()
-          .nullable(),
+          email: z
+            .string()
+            .trim()
+            .email("Invalid attendee email format")
+            .optional()
+            .nullable(),
 
-        email: z
-          .string()
-          .trim()
-          .email("Invalid attendee email format")
-          .optional()
-          .nullable(),
+          phone: z
+            .string()
+            .trim()
+            .min(1, "Attendee phone cannot be empty")
+            .max(20)
+            .optional()
+            .nullable(),
+        })
+      )
+      .optional()
+      .nullable(),
 
-        phone: z
-          .string()
-          .trim()
-          .max(20)
-          .optional()
-          .nullable(),
-      })
-    )
-    .optional()
-    .nullable(),
+    idempotencyKey: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .optional()
+      .nullable(),
+  })
+  .refine(
+    (data) => {
+      const hasDigitalId =
+        data.digitalId !== undefined &&
+        data.digitalId !== null;
 
-  idempotencyKey: z
-    .string()
-    .trim()
-    .max(255)
-    .optional()
-    .nullable(),
-}).refine(
-  (data) => {
-    const hasDigitalId =
-      data.digitalId !== undefined &&
-      data.digitalId !== null;
+      if (hasDigitalId) {
+        return true;
+      }
 
-    if (!hasDigitalId) {
-      return (
-        !!data.guestName &&
-        !!data.guestEmail &&
-        !!data.guestPhone
+      return Boolean(
+        data.guestName?.trim() &&
+        data.guestEmail?.trim() &&
+        data.guestPhone?.trim()
       );
+    },
+    {
+      message:
+        "Guest name, email, and phone number are required for guest checkouts when not logged in 📝",
+      path: ["guestEmail"],
     }
-
-    return true;
-  },
-  {
-    message:
-      "Guest name, email, and phone number are required for guest checkouts when not logged in 📝",
-    path: ["guestEmail"],
-  }
-);
+  );
 
 export const updateBookingStatusValidator = z.object({
   bookingStatus: z.enum(
@@ -194,9 +204,9 @@ export const updateBookingStatusValidator = z.object({
   ),
 });
 
-// ==========================================
-// 🔤 TYPE EXPORTS FOR CONTROLLERS & SERVICES
-// ==========================================
+/* ==========================================
+ * 🔤 TYPE EXPORTS FOR CONTROLLERS & SERVICES
+ * ========================================== */
 
 export type TCreateEvent = z.infer<typeof createEventValidator>;
 export type TUpdateEvent = z.infer<typeof updateEventValidator>;

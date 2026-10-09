@@ -322,6 +322,7 @@ export const getEventBySlugController: RequestHandler = async (req, res) => {
   }
 };
 
+
 // ==========================================================
 // 🎫 BOOKING CONTROLLERS (12 - 20)
 // ==========================================================
@@ -330,6 +331,7 @@ export const getEventBySlugController: RequestHandler = async (req, res) => {
 export const getAllBookings: RequestHandler = async (req, res) => {
   try {
     const bookings = await getAllBookingsService();
+
     res.status(200).json({
       success: true,
       message: "All bookings records fetched successfully 📑",
@@ -338,7 +340,10 @@ export const getAllBookings: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("[GET_ALL_BOOKINGS_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to fetch bookings list" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch bookings list",
+    });
   }
 };
 
@@ -346,14 +351,35 @@ export const getAllBookings: RequestHandler = async (req, res) => {
 export const getBookingById: RequestHandler = async (req, res) => {
   try {
     const bookingId = Number(req.params.id);
-    if (isNaN(bookingId)) {
-      res.status(400).json({ success: false, error: "Invalid booking ID format provided 🚫" });
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid booking ID format provided 🚫",
+      });
       return;
     }
 
     const booking = await getBookingByIdService(bookingId);
+
     if (!booking) {
-      res.status(404).json({ success: false, error: "Booking record not found 🔍" });
+      res.status(404).json({
+        success: false,
+        error: "Booking record not found 🔍",
+      });
+      return;
+    }
+
+    // Users can only access their own bookings.
+    // This assumes booking.digitalId stores the authenticated user's userId.
+    if (
+      req.user?.role === "user" &&
+      Number(booking.digitalId) !== Number(req.user.userId)
+    ) {
+      res.status(403).json({
+        success: false,
+        error: "You are not authorized to access this booking 🚫",
+      });
       return;
     }
 
@@ -364,20 +390,46 @@ export const getBookingById: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("[GET_BOOKING_BY_ID_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to fetch booking record" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch booking record",
+    });
   }
 };
 
 // 14. Get bookings by User digitalId
 export const getBookingsByUserId: RequestHandler = async (req, res) => {
   try {
-    const digitalId = Number(req.params.digitalId || req.user?.userId);
-    if (isNaN(digitalId)) {
-      res.status(400).json({ success: false, error: "User Digital ID is required to fetch bookings 🆔" });
+    const requestedDigitalId = req.params.digitalId
+      ? Number(req.params.digitalId)
+      : Number(req.user?.userId);
+
+    if (
+      !Number.isInteger(requestedDigitalId) ||
+      requestedDigitalId <= 0
+    ) {
+      res.status(400).json({
+        success: false,
+        error: "User Digital ID is required to fetch bookings 🆔",
+      });
       return;
     }
 
-    const bookings = await getBookingsByUserIdService(digitalId);
+    // Prevent a regular user from fetching another user's bookings.
+    // This assumes digitalId corresponds to req.user.userId.
+    if (
+      req.user?.role === "user" &&
+      requestedDigitalId !== Number(req.user.userId)
+    ) {
+      res.status(403).json({
+        success: false,
+        error: "You are not authorized to access these bookings 🚫",
+      });
+      return;
+    }
+
+    const bookings = await getBookingsByUserIdService(requestedDigitalId);
+
     res.status(200).json({
       success: true,
       message: "User bookings retrieved successfully 🎫",
@@ -386,7 +438,49 @@ export const getBookingsByUserId: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("[GET_BOOKINGS_BY_USER_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to fetch user bookings" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch user bookings",
+    });
+  }
+};
+
+// Get the authenticated user's bookings
+// Register /bookings/me before /bookings/:id in your routes.
+export const getMyBookings: RequestHandler = async (req, res) => {
+  try {
+    if (!req.user?.userId) {
+      res.status(401).json({
+        success: false,
+        error: "Authentication is required to fetch your bookings 🔐",
+      });
+      return;
+    }
+
+    const digitalId = Number(req.user.userId);
+
+    if (!Number.isInteger(digitalId) || digitalId <= 0) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid user Digital ID 🆔",
+      });
+      return;
+    }
+
+    const bookings = await getBookingsByUserIdService(digitalId);
+
+    res.status(200).json({
+      success: true,
+      message: "User bookings retrieved successfully 🎫",
+      count: bookings.length,
+      data: bookings,
+    });
+  } catch (error: any) {
+    console.error("[GET_MY_BOOKINGS_ERROR]", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch your bookings",
+    });
   }
 };
 
@@ -394,12 +488,17 @@ export const getBookingsByUserId: RequestHandler = async (req, res) => {
 export const getBookingsByEventId: RequestHandler = async (req, res) => {
   try {
     const eventId = Number(req.params.eventId);
-    if (isNaN(eventId)) {
-      res.status(400).json({ success: false, error: "Invalid event ID format provided 🚫" });
+
+    if (!Number.isInteger(eventId) || eventId <= 0) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid event ID format provided 🚫",
+      });
       return;
     }
 
     const bookings = await getBookingsByEventIdService(eventId);
+
     res.status(200).json({
       success: true,
       message: "Event bookings fetched successfully 🎪",
@@ -408,7 +507,10 @@ export const getBookingsByEventId: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("[GET_BOOKINGS_BY_EVENT_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to fetch event bookings" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch event bookings",
+    });
   }
 };
 
@@ -416,7 +518,21 @@ export const getBookingsByEventId: RequestHandler = async (req, res) => {
 export const getRecentBookings: RequestHandler = async (req, res) => {
   try {
     const limitNum = req.query.limit ? Number(req.query.limit) : 10;
+
+    if (
+      !Number.isInteger(limitNum) ||
+      limitNum < 1 ||
+      limitNum > 100
+    ) {
+      res.status(400).json({
+        success: false,
+        error: "Limit must be an integer between 1 and 100 🚫",
+      });
+      return;
+    }
+
     const bookings = await getRecentBookingsService(limitNum);
+
     res.status(200).json({
       success: true,
       message: `Fetched ${bookings.length} recent booking(s) successfully ⚡`,
@@ -425,7 +541,10 @@ export const getRecentBookings: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("[GET_RECENT_BOOKINGS_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to fetch recent bookings" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch recent bookings",
+    });
   }
 };
 
@@ -434,7 +553,16 @@ export const getRecentBookings: RequestHandler = async (req, res) => {
 // ==========================================
 export const createBooking: RequestHandler = async (req, res) => {
   try {
-    const parseResult = createBookingValidator.safeParse(req.body);
+    // Authenticated users must use their authenticated ID rather than
+    // trusting a digitalId supplied in the request body.
+    const requestBody = req.user?.userId
+      ? {
+          ...req.body,
+          digitalId: req.user.userId,
+        }
+      : req.body;
+
+    const parseResult = createBookingValidator.safeParse(requestBody);
 
     if (!parseResult.success) {
       res.status(400).json({
@@ -444,13 +572,15 @@ export const createBooking: RequestHandler = async (req, res) => {
       return;
     }
 
+    const data = parseResult.data;
+
     const resolvedDigitalId =
-      parseResult.data.digitalId ?? req.user?.userId;
+      req.user?.userId ?? data.digitalId ?? undefined;
 
     const payload = {
-      eventId: parseResult.data.eventId,
-      ticketTypeId: parseResult.data.ticketTypeId,
-      quantity: parseResult.data.quantity,
+      eventId: data.eventId,
+      ticketTypeId: data.ticketTypeId,
+      quantity: data.quantity,
 
       digitalId:
         resolvedDigitalId !== null && resolvedDigitalId !== undefined
@@ -459,25 +589,24 @@ export const createBooking: RequestHandler = async (req, res) => {
 
       // Payer / primary attendee
       guestName:
-        parseResult.data.guestName ??
-        (req.user as any)?.name ??
+        data.guestName ??
+        req.user?.fullName ??
         undefined,
 
       guestEmail:
-        parseResult.data.guestEmail ??
+        data.guestEmail ??
         req.user?.email ??
         undefined,
 
       guestPhone:
-        parseResult.data.guestPhone ??
-        (req.user as any)?.phone ??
+        data.guestPhone ??
         undefined,
 
       // Individual attendees for each ticket
-      attendees: parseResult.data.attendees ?? undefined,
+      attendees: data.attendees ?? undefined,
 
       idempotencyKey:
-        parseResult.data.idempotencyKey ?? undefined,
+        data.idempotencyKey ?? undefined,
     };
 
     const result = await createBookingService(payload);
@@ -507,22 +636,40 @@ export const createBooking: RequestHandler = async (req, res) => {
 export const updateBookingStatus: RequestHandler = async (req, res) => {
   try {
     const bookingId = Number(req.params.id);
-    if (isNaN(bookingId)) {
-      res.status(400).json({ success: false, error: "Invalid booking ID format provided 🚫" });
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid booking ID format provided 🚫",
+      });
       return;
     }
 
     const parseResult = updateBookingStatusValidator.safeParse(req.body);
+
     if (!parseResult.success) {
-      res.status(400).json({ success: false, error: parseResult.error.issues });
+      res.status(400).json({
+        success: false,
+        error: parseResult.error.issues,
+      });
       return;
     }
 
-    const message = await updateBookingStatusService(bookingId, parseResult.data.bookingStatus);
-    res.status(200).json({ success: true, message: `${message} ✅` });
+    const message = await updateBookingStatusService(
+      bookingId,
+      parseResult.data.bookingStatus
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${message} ✅`,
+    });
   } catch (error: any) {
     console.error("[UPDATE_BOOKING_STATUS_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to update booking status" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to update booking status",
+    });
   }
 };
 
@@ -530,16 +677,27 @@ export const updateBookingStatus: RequestHandler = async (req, res) => {
 export const cancelBooking: RequestHandler = async (req, res) => {
   try {
     const bookingId = Number(req.params.id);
-    if (isNaN(bookingId)) {
-      res.status(400).json({ success: false, error: "Invalid booking ID format provided 🚫" });
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid booking ID format provided 🚫",
+      });
       return;
     }
 
     const message = await cancelBookingService(bookingId);
-    res.status(200).json({ success: true, message: `${message} ❌` });
+
+    res.status(200).json({
+      success: true,
+      message: `${message} ❌`,
+    });
   } catch (error: any) {
     console.error("[CANCEL_BOOKING_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to cancel booking" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to cancel booking",
+    });
   }
 };
 
@@ -547,12 +705,17 @@ export const cancelBooking: RequestHandler = async (req, res) => {
 export const getEventBookingStats: RequestHandler = async (req, res) => {
   try {
     const eventId = Number(req.params.eventId);
-    if (Number.isNaN(eventId)) {
-      res.status(400).json({ success: false, error: "Invalid event ID format provided 🚫" });
+
+    if (!Number.isInteger(eventId) || eventId <= 0) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid event ID format provided 🚫",
+      });
       return;
     }
 
     const stats = await getEventBookingStatsService(eventId);
+
     res.status(200).json({
       success: true,
       message: "Event booking statistics generated successfully 📊",
@@ -560,6 +723,9 @@ export const getEventBookingStats: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("[GET_EVENT_STATS_ERROR]", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to fetch event statistics" });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch event statistics",
+    });
   }
 };
