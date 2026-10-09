@@ -1,12 +1,13 @@
-import { eq, desc, and, sum, count, gte, lte } from "drizzle-orm";
+import { eq, desc, and, sum, count, gte, lte, sql } from "drizzle-orm";
 import db from "../../drizzle/db";
 import {
   payments,
   bookings,
+  wallets,
+  organizations,
   TInsertPayment,
   TSelectPayment,
   paymentStatusEnum,
-  wallets,
 } from "../../drizzle/schema";
 import { confirmBookingAfterPayment } from "../events/eventBooking.service";
 
@@ -219,6 +220,58 @@ export const calculatePaymentFees = (
 };
 
 // ==========================================
+// WALLET HELPERS (used by create + status update)
+// ==========================================
+const DEFAULT_COMMISSION = 5; // % fallback if the organization has none set
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+// Splits the amount using the organization's own commission percentage
+const resolveFees = async (tx: Tx, orgId: number, amount: number) => {
+  const [org] = await tx
+    .select({ commission: organizations.commissionPercentage }) // 👈 adjust to your real column name
+    .from(organizations)
+    .where(eq(organizations.orgId, orgId));
+
+  const rate = Number(org?.commission ?? DEFAULT_COMMISSION);
+  return calculatePaymentFees(amount, rate);
+};
+
+// Credits the organizer's wallet with the NET amount (after the platform fee)
+const creditWalletFromPayment = async (
+  tx: Tx,
+  payment: { orgId: number | null; netAmount: string | null }
+) => {
+  const net = Number(payment.netAmount ?? 0);
+  if (!payment.orgId || net <= 0) return;
+
+  const [existing] = await tx
+    .select()
+    .from(wallets)
+    .where(eq(wallets.orgId, payment.orgId));
+
+  if (!existing) {
+    await tx.insert(wallets).values({
+      orgId: payment.orgId,
+      balance: "0.00",
+      pendingBalance: "0.00",
+      totalEarned: "0.00",
+      currency: "KES",
+    });
+  }
+
+  // Atomic increment: safe even if two payments land at the same moment
+  await tx
+    .update(wallets)
+    .set({
+      balance: sql`${wallets.balance} + ${net}`,
+      totalEarned: sql`${wallets.totalEarned} + ${net}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(wallets.orgId, payment.orgId));
+};
+
+// ==========================================
 // 13. CREATE A NEW PAYMENT & AUTO-FUND WALLET (FINAL)
 // ==========================================
 export const createPaymentService = async (input: any) => {
@@ -236,18 +289,15 @@ export const createPaymentService = async (input: any) => {
     }
 
     // 2. Resolve amount and organization ID
-    const paymentAmount = input.amount ?? bookingRecord.totalAmount;
+    const paymentAmount = Number(input.amount ?? bookingRecord.totalAmount);
     const organizationId = input.orgId ?? bookingRecord.event?.orgId;
 
     if (!organizationId) {
       throw new Error(`Associated organization could not be found for booking ${input.bookingId} 🚫`);
     }
 
-    // 3. Platform fee & net amount
-    const feePercentage = 0.05; // 5% platform fee (adjust as needed)
-    const numericAmount = Number(paymentAmount);
-    const platformFee = (numericAmount * feePercentage).toFixed(2);
-    const netAmount = (numericAmount - Number(platformFee)).toFixed(2);
+    // 3. Platform fee & net amount using the organization's commission
+    const { amount, platformFee, netAmount } = await resolveFees(tx, organizationId, paymentAmount);
 
     // 4. Insert the payment record
     const [created] = await tx
@@ -256,7 +306,7 @@ export const createPaymentService = async (input: any) => {
         bookingId: bookingRecord.bookingId,
         orgId: organizationId,
         digitalId: bookingRecord.digitalId,
-        amount: numericAmount.toFixed(2),
+        amount,
         platformFee,
         netAmount,
         paymentMethod: input.paymentMethod,
@@ -267,27 +317,7 @@ export const createPaymentService = async (input: any) => {
 
     // 5. Fund the organizer's wallet (only if the payment is already Completed)
     if (created.paymentStatus === "Completed") {
-      const [existingWallet] = await tx
-        .select()
-        .from(wallets)
-        .where(eq(wallets.orgId, organizationId));
-
-      if (!existingWallet) {
-        await tx.insert(wallets).values({
-          orgId: organizationId,
-          balance: netAmount,
-          pendingBalance: "0.00",
-          currency: "KES",
-        });
-      } else {
-        const currentBalance = Number(existingWallet.balance || 0);
-        const newBalance = (currentBalance + Number(netAmount)).toFixed(2);
-
-        await tx
-          .update(wallets)
-          .set({ balance: newBalance, updatedAt: new Date() })
-          .where(eq(wallets.orgId, organizationId));
-      }
+      await creditWalletFromPayment(tx, created);
     }
 
     return created;
@@ -324,6 +354,7 @@ export const updatePaymentService = async (
 // ==========================================
 // 15. UPDATE PAYMENT STATUS & TRANSACTION ID (FINAL)
 //     M-Pesa and Stripe both go through here.
+//     Credits the wallet on the FIRST move to Completed.
 // ==========================================
 export const updatePaymentStatusService = async (
   paymentId: number,
@@ -332,22 +363,40 @@ export const updatePaymentStatusService = async (
   resultCode?: string,
   resultDesc?: string
 ): Promise<TSelectPayment> => {
-  const [previous] = await db.select().from(payments).where(eq(payments.paymentId, paymentId));
+  const { updatedPayment, firstCompletion } = await db.transaction(async (tx) => {
+    // Lock the row so duplicate callbacks can't double-credit the wallet
+    const [previous] = await tx
+      .select()
+      .from(payments)
+      .where(eq(payments.paymentId, paymentId))
+      .for("update");
 
-  const [updatedPayment] = await db
-    .update(payments)
-    .set({
-      paymentStatus: status,
-      ...(transactionId && { transactionId }),
-      ...(resultCode && { resultCode }),
-      ...(resultDesc && { resultDesc }),
-      updatedAt: new Date(),
-    })
-    .where(eq(payments.paymentId, paymentId))
-    .returning();
+    if (!previous) throw new Error("Payment not found.");
+
+    const [updated] = await tx
+      .update(payments)
+      .set({
+        paymentStatus: status,
+        ...(transactionId && { transactionId }),
+        ...(resultCode && { resultCode }),
+        ...(resultDesc && { resultDesc }),
+        updatedAt: new Date(),
+      })
+      .where(eq(payments.paymentId, paymentId))
+      .returning();
+
+    const first = status === "Completed" && previous.paymentStatus !== "Completed";
+
+    // 💰 Credit the organizer's wallet with the net amount (after platform fee)
+    if (first) {
+      await creditWalletFromPayment(tx, updated);
+    }
+
+    return { updatedPayment: updated, firstCompletion: first };
+  });
 
   // 🎯 Only on the FIRST move to Completed: deduct stock, make tickets, email them
-  if (status === "Completed" && previous?.paymentStatus !== "Completed" && updatedPayment.bookingId) {
+  if (firstCompletion && updatedPayment.bookingId) {
     try {
       await confirmBookingAfterPayment(updatedPayment.bookingId);
     } catch (err) {

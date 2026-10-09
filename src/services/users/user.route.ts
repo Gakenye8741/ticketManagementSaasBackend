@@ -12,7 +12,7 @@ import {
   sendEmailToRegisteredUsersController,
 } from "./user.controller";
 
-import { adminAuth, anyAuthenticatedUser } from "../../middleware/bearAuth";
+import { adminAuth, adminOrOrganizerAuth, anyAuthenticatedUser } from "../../middleware/bearAuth";
 
 export const userRouter = Router();
 
@@ -20,10 +20,10 @@ export const userRouter = Router();
 userRouter.get("/users", adminAuth, getUsers);
 
 // 🔍🧑 Search users by last name (basic profile match) - Admin only
-userRouter.get("/users-search", adminAuth, getUserByLastName);
+userRouter.get("/users-search", adminOrOrganizerAuth, getUserByLastName);
 
 // 🔍🧾 Search users by last name with full profile/details - Admin only
-userRouter.get("/details/users-search", adminAuth, searchUsersWithDetails);
+userRouter.get("/details/users-search", adminOrOrganizerAuth, searchUsersWithDetails);
 
 // 🧑‍💼 Get user by digital ID - Any authenticated user
 userRouter.get("/users/:digitalId", anyAuthenticatedUser, getUserByDigitalId);

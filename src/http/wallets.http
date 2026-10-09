@@ -1,6 +1,6 @@
 @baseUrl = http://localhost:5000/api
 # Replace with your actual JWT token or auth_token cookie value
-@orgId = 1
+@orgId = 6
 @digitalId = 1
 @memberId = 1
 @slug = tech-fest-2026
@@ -47,7 +47,7 @@ Cookie: token = {{adminToken}}
 }
 
 ### Get Wallet Stats
-GET {{baseUrl}}/wallets/1/stats
+GET {{baseUrl}}/wallets/6/stats
 Cookie: token = {{token}}
 
 ### Get Wallet Overview
