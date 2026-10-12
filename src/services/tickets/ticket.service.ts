@@ -3,6 +3,66 @@ import { eq, and, count } from "drizzle-orm";
 import crypto from "node:crypto";
 import db from "../../drizzle/db";
 import { processAndEmailTicketService } from "../EmailTicket/emailTicket.Service";
+import { emailSingleTicketService, SingleTicketEmailReason } from "../EmailTicket/Emailsingleticket.service";
+
+
+// ==========================================
+// NEW: SMALL HELPERS
+// ==========================================
+
+/** A fresh, unguessable ticket token (the value the QR code and view link use) */
+const generateTicketToken = () =>
+  `TKT-${crypto.randomBytes(16).toString("hex").toUpperCase()}`;
+
+/** "Jane Wanjiru" for a digitalId, or undefined (used in "X assigned/sent you a ticket") */
+const getDisplayName = async (
+  digitalId?: number | null
+): Promise<string | undefined> => {
+  if (!digitalId) return undefined;
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.digitalId, digitalId));
+
+  if (!user) return undefined;
+  return [user.firstName, user.lastName].filter(Boolean).join(" ") || undefined;
+};
+
+/**
+ * Emails the ticket to its current attendee.
+ * A failed email must NEVER undo an assignment/claim that already succeeded,
+ * so errors are logged and swallowed.
+ */
+const notifyTicketAttendee = async (
+  ticketId: number,
+  reason: SingleTicketEmailReason,
+  fromName?: string
+) => {
+  try {
+    await emailSingleTicketService(ticketId, reason, { fromName });
+  } catch (error: any) {
+    console.error(
+      `❌ Could not email ${reason} ticket ${ticketId}:`,
+      error?.message || error
+    );
+  }
+};
+
+/**
+ * Only the CURRENT holder may change a ticket
+ * (or the purchaser, for tickets that never had a holder account).
+ * `actorDigitalId` should always come from the verified login token.
+ */
+const assertCanManage = (ticket: TSelectTicket, actorDigitalId?: number) => {
+  if (actorDigitalId === undefined) return;
+
+  const owner = ticket.digitalId ?? ticket.purchaserDigitalId;
+
+  if (owner !== actorDigitalId) {
+    throw new Error("Unauthorized: You do not own this ticket 🛡️");
+  }
+};
 
 // ==========================================
 // GENERATE TICKETS FOR A BOOKING
@@ -408,10 +468,57 @@ export const getTicketsByPurchaserId = async (
 
 // ==========================================
 // 8. ASSIGN TICKET TO AN ATTENDEE
+// ------------------------------------------
+// NEW: emails the ticket link to the attendee.
+// - An email is sent when the attendee's email is new or changed
+//   (fixing only a name/phone does not re-send).
+// - When the attendee changes, the ticket token is rotated so the
+//   previous person's link and QR code stop working.
+// - Assigning an attendee is NOT a transfer, so transferStatus is
+//   left alone (it used to be set to "pending_claim", which made
+//   every assigned ticket look like a pending transfer).
+// - Pass the logged-in user's digitalId as `actorDigitalId`.
 // ==========================================
+
+type AttendeeInput = { name: string; email: string; phone?: string };
+
+/** Writes one assignment and says whether the attendee should be emailed */
+const applyAssignment = async (
+  ticket: TSelectTicket,
+  attendee: AttendeeInput
+): Promise<{ updated: TSelectTicket; shouldEmail: boolean }> => {
+  const name = attendee.name?.trim();
+  const email = attendee.email?.trim();
+  const phone = attendee.phone?.trim() || null;
+
+  if (!name || !email) {
+    throw new Error(`Name and email are required to assign ticket ${ticket.ticketId} 📝`);
+  }
+
+  const emailChanged =
+    (ticket.attendeeEmail ?? "").toLowerCase() !== email.toLowerCase();
+
+  const [updated] = await db
+    .update(tickets)
+    .set({
+      attendeeName: name,
+      attendeeEmail: email,
+      attendeePhone: phone,
+      isAssigned: true,
+      // New person = new link. The old person's link and QR stop working.
+      ...(emailChanged ? { ticketToken: generateTicketToken() } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(tickets.ticketId, ticket.ticketId))
+    .returning();
+
+  return { updated, shouldEmail: emailChanged };
+};
+
 export const assignTicket = async (
   ticketId: number,
-  attendeeData: { name: string; email: string; phone?: string }
+  attendeeData: { name: string; email: string; phone?: string },
+  actorDigitalId?: number
 ): Promise<TSelectTicket> => {
   const [ticket] = await db
     .select()
@@ -420,56 +527,80 @@ export const assignTicket = async (
 
   if (!ticket) throw new Error("Ticket not found 🚫");
 
-  const [updated] = await db
-    .update(tickets)
-    .set({
-      attendeeName: attendeeData.name,
-      attendeeEmail: attendeeData.email,
-      attendeePhone: attendeeData.phone ?? null,
-      isAssigned: true,
-      transferStatus: "pending_claim",
-      updatedAt: new Date(),
-    })
-    .where(eq(tickets.ticketId, ticketId))
-    .returning();
+  assertCanManage(ticket, actorDigitalId);
+
+  if (ticket.isScanned) {
+    throw new Error("This ticket has already been scanned and can't be changed 🚫");
+  }
+
+  const { updated, shouldEmail } = await applyAssignment(ticket, attendeeData);
+
+  if (shouldEmail) {
+    const fromName = await getDisplayName(actorDigitalId ?? ticket.digitalId);
+    await notifyTicketAttendee(updated.ticketId, "assigned", fromName);
+  }
 
   return updated;
 };
 
 // ==========================================
 // 9. BULK ASSIGN BUNDLE TICKETS
+// ------------------------------------------
+// Accepts either { name, email, phone } or the frontend's
+// { attendeeName, attendeeEmail, attendeePhone }.
+// Each newly assigned attendee gets their own email.
 // ==========================================
 export const bulkAssignBundleTickets = async (
   groupBundleId: string,
   assignments: Array<{
     ticketId: number;
-    name: string;
-    email: string;
+    name?: string;
+    email?: string;
     phone?: string;
-  }>
+    attendeeName?: string;
+    attendeeEmail?: string;
+    attendeePhone?: string;
+  }>,
+  actorDigitalId?: number
 ): Promise<TSelectTicket[]> => {
   const updatedTickets: TSelectTicket[] = [];
+  const toEmail: number[] = [];
 
   for (const item of assignments) {
-    const [updated] = await db
-      .update(tickets)
-      .set({
-        attendeeName: item.name,
-        attendeeEmail: item.email,
-        attendeePhone: item.phone ?? null,
-        isAssigned: true,
-        transferStatus: "pending_claim",
-        updatedAt: new Date(),
-      })
+    const [ticket] = await db
+      .select()
+      .from(tickets)
       .where(
         and(
           eq(tickets.ticketId, item.ticketId),
           eq(tickets.groupBundleId, groupBundleId)
         )
-      )
-      .returning();
+      );
 
-    if (updated) updatedTickets.push(updated);
+    if (!ticket) continue;
+
+    assertCanManage(ticket, actorDigitalId);
+
+    if (ticket.isScanned) {
+      throw new Error(`Ticket ${ticket.ticketId} has already been scanned and can't be changed 🚫`);
+    }
+
+    const { updated, shouldEmail } = await applyAssignment(ticket, {
+      name: (item.name ?? item.attendeeName) as string,
+      email: (item.email ?? item.attendeeEmail) as string,
+      phone: item.phone ?? item.attendeePhone,
+    });
+
+    updatedTickets.push(updated);
+    if (shouldEmail) toEmail.push(updated.ticketId);
+  }
+
+  // Send the emails after every assignment has been saved
+  if (toEmail.length > 0) {
+    const fromName = await getDisplayName(actorDigitalId);
+    for (const id of toEmail) {
+      await notifyTicketAttendee(id, "assigned", fromName);
+    }
   }
 
   return updatedTickets;
@@ -491,6 +622,10 @@ export const initiateTicketTransfer = async (
 
   if (ticket.digitalId !== holderId) {
     throw new Error("Unauthorized: You do not own this ticket 🛡️");
+  }
+
+  if (ticket.isScanned) {
+    throw new Error("This ticket has already been scanned and can't be transferred 🚫");
   }
 
   const claimToken = `CLAIM-${crypto
@@ -516,6 +651,15 @@ export const initiateTicketTransfer = async (
 
 // ==========================================
 // 11. CLAIM TRANSFERRED TICKET
+// ------------------------------------------
+// NEW:
+// - The new holder is emailed their ticket with the view link.
+// - The ticket token is rotated, so the previous holder's old
+//   link and QR code stop working.
+// - The claim is a single atomic update: two people using the same
+//   code at the same time can't both win.
+// - Scanned tickets and claiming your own ticket are refused.
+// - `newHolderDigitalId` must come from the verified login token.
 // ==========================================
 export const claimTransferredTicket = async (
   claimToken: string,
@@ -536,6 +680,16 @@ export const claimTransferredTicket = async (
     throw new Error("This transfer claim link has expired ⌛");
   }
 
+  if (ticket.isScanned) {
+    throw new Error("This ticket has already been scanned and can't be claimed 🚫");
+  }
+
+  if (ticket.digitalId === newHolderDigitalId) {
+    throw new Error("This ticket is already in your account 🎟️");
+  }
+
+  const previousHolderId = ticket.digitalId;
+
   const [claimedTicket] = await db
     .update(tickets)
     .set({
@@ -545,13 +699,29 @@ export const claimTransferredTicket = async (
       attendeePhone: attendeeInfo.phone ?? null,
       isAssigned: true,
       transferStatus: "transferred",
+      // New owner = new link. The previous holder's link and QR stop working.
+      ticketToken: generateTicketToken(),
       claimToken: null,
       claimTokenExpiresAt: null,
       claimedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(tickets.ticketId, ticket.ticketId))
+    // Matching on the claim token again makes this atomic
+    .where(
+      and(
+        eq(tickets.ticketId, ticket.ticketId),
+        eq(tickets.claimToken, claimToken)
+      )
+    )
     .returning();
+
+  if (!claimedTicket) {
+    throw new Error("This claim code has already been used 🚫");
+  }
+
+  // Email the new holder their ticket and link
+  const fromName = await getDisplayName(previousHolderId);
+  await notifyTicketAttendee(claimedTicket.ticketId, "transferred", fromName);
 
   return claimedTicket;
 };
@@ -607,6 +777,9 @@ export const scanTicket = async (
 
 // ==========================================
 // 13. UNASSIGN TICKET
+// ------------------------------------------
+// NEW: only the current holder can unassign, and unassigning also
+// cancels any pending transfer (the claim code stops working).
 // ==========================================
 export const unassignTicket = async (
   ticketId: number,
@@ -619,12 +792,7 @@ export const unassignTicket = async (
 
   if (!ticket) throw new Error("Ticket not found 🚫");
 
-  if (
-    ticket.purchaserDigitalId !== ownerId &&
-    ticket.digitalId !== ownerId
-  ) {
-    throw new Error("Unauthorized to modify this ticket 🛡️");
-  }
+  assertCanManage(ticket, ownerId);
 
   const [updated] = await db
     .update(tickets)
@@ -634,6 +802,8 @@ export const unassignTicket = async (
       attendeePhone: null,
       isAssigned: false,
       transferStatus: "unassigned",
+      claimToken: null,
+      claimTokenExpiresAt: null,
       updatedAt: new Date(),
     })
     .where(eq(tickets.ticketId, ticketId))

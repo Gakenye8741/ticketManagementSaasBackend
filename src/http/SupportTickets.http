@@ -1,0 +1,462 @@
+
+@baseUrl = http://localhost:5000/api/support
+
+# Paste a real bearer token for each role (from your login endpoint)
+@adminToken = PASTE_ADMIN_TOKEN_HERE
+@organizerToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjczNjIxMzY4OCwiZGlnaXRhbElkIjo3MzYyMTM2ODgsIm9yZ0lkIjoxLCJlbWFpbCI6InByb2dyYW1taW5nZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoib3JnYW5pemVyIiwiZmlyc3ROYW1lIjoiT3JnYW5pemVyMSIsImlhdCI6MTc5MTY5NTcxNSwiZXhwIjoxNzk2ODc5NzE1fQ.ok5eIlltIPw7fg1ITno9xubMzIaLaN4hWIP2Y4zIbf8
+@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjk0MzIxMzczNywiZGlnaXRhbElkIjo5NDMyMTM3MzcsIm9yZ0lkIjo1LCJlbWFpbCI6ImJyYXlvZ2FrZW55ZTA0QGdtYWlsLmNvbSIsInJvbGUiOiJ1c2VyIiwiZmlyc3ROYW1lIjoiR2FrZW55ZSIsImlhdCI6MTc5MTY5NTQyNCwiZXhwIjoxNzk2ODc5NDI0fQ.hFMWLFZGeosqgGR4uzlTf4acCzeoCG5uwM0BwDywfKE
+
+# Ids that exist in your database
+@ticketId = 1
+@responseId = 1
+@mediaId = 1
+# orgId is only for organizers; normal users do not have one
+@orgId = 1
+@digitalId = 1
+@assignedTo = 2
+
+@json = application/json
+
+
+### =====================================================================
+### TICKETS: create
+### =====================================================================
+
+### Create a ticket as a normal user (no orgId: it becomes a Platform ticket)
+# @name createUserTicket
+POST {{baseUrl}}/tickets
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "subject": "Cannot download my ticket PDF",
+  "description": "After paying, the download button does nothing on the order page.",
+  "priority": "Medium"
+}
+
+### Create an organization ticket as an ORGANIZER (orgId is only for organizers)
+# @name createOrgTicket
+POST {{baseUrl}}/tickets
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "subject": "Attendee check-in scanner not syncing",
+  "description": "Scans made at the gate are not showing up in the event dashboard.",
+  "orgId": {{orgId}},
+  "scope": "Organization",
+  "priority": "High"
+}
+
+### PERMISSION TEST: a normal user sending an orgId should return 403
+POST {{baseUrl}}/tickets
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "subject": "Trying to file under an organization",
+  "description": "Normal users do not belong to an organization.",
+  "orgId": {{orgId}},
+  "scope": "Organization"
+}
+
+### VALIDATION TEST: should return 400 (subject too short; Organization scope needs an orgId)
+POST {{baseUrl}}/tickets
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "subject": "Hi",
+  "description": "short",
+  "scope": "Organization"
+}
+
+### AUTH TEST: should return 401 (no token)
+POST {{baseUrl}}/tickets
+Content-Type: {{json}}
+
+{
+  "subject": "No token ticket",
+  "description": "This request has no Authorization header."
+}
+
+
+### =====================================================================
+### TICKETS: lists and searches
+### =====================================================================
+
+### List ALL tickets (admin) with filters + pagination
+GET {{baseUrl}}/tickets?page=1&limit=20
+Cookie: token={{adminToken}}
+
+### List ALL tickets filtered
+GET {{baseUrl}}/tickets?status=Open&priority=High&scope=Organization&page=1&limit=10
+Cookie: token={{adminToken}}
+
+### VALIDATION TEST: limit above 100 should return 400
+GET {{baseUrl}}/tickets?limit=500
+Cookie: token={{adminToken}}
+
+### My tickets (any logged-in user)
+GET {{baseUrl}}/tickets/mine?page=1&limit=20
+Cookie: token={{userToken}}
+
+### My tickets filtered by status
+GET {{baseUrl}}/tickets/mine?status=Open
+Cookie: token={{userToken}}
+
+### Tickets assigned to me (staff)
+GET {{baseUrl}}/tickets/assigned
+Cookie: token={{organizerToken}}
+
+### Platform tickets (admin)
+GET {{baseUrl}}/tickets/platform
+Cookie: token={{adminToken}}
+
+### Escalated tickets (admin)
+GET {{baseUrl}}/tickets/escalated
+Cookie: token={{adminToken}}
+
+### Unassigned tickets (staff)
+GET {{baseUrl}}/tickets/unassigned
+Cookie: token={{organizerToken}}
+
+### Stale tickets: no activity for 7 days (staff)
+GET {{baseUrl}}/tickets/stale?days=7
+Cookie: token={{organizerToken}}
+
+### Search tickets
+GET {{baseUrl}}/tickets/search?term=download&page=1&limit=10
+Cookie: token={{userToken}}
+
+### VALIDATION TEST: empty search term should return 400
+GET {{baseUrl}}/tickets/search?term=
+Cookie: token={{userToken}}
+
+### Tickets of a specific user (owner or staff)
+GET {{baseUrl}}/users/{{digitalId}}/tickets
+Cookie: token={{adminToken}}
+
+### Tickets of an organization (staff)
+GET {{baseUrl}}/organizations/{{orgId}}/tickets
+Cookie: token={{organizerToken}}
+
+### Tickets assigned to a specific agent (staff)
+GET {{baseUrl}}/agents/{{assignedTo}}/tickets
+Cookie: token={{adminToken}}
+
+
+### =====================================================================
+### TICKETS: stats
+### =====================================================================
+
+### Count by status
+GET {{baseUrl}}/tickets/stats/status
+Cookie: token={{organizerToken}}
+
+### Count by priority
+GET {{baseUrl}}/tickets/stats/priority
+Cookie: token={{organizerToken}}
+
+### Average resolution time in hours
+GET {{baseUrl}}/tickets/stats/resolution-time
+Cookie: token={{organizerToken}}
+
+
+### =====================================================================
+### TICKETS: single ticket
+### =====================================================================
+
+### Get one ticket with details (owner or staff)
+GET {{baseUrl}}/tickets/{{ticketId}}
+Cookie: token={{userToken}}
+
+### Get one ticket including internal notes (only staff will see them)
+GET {{baseUrl}}/tickets/{{ticketId}}?includeInternal=true
+Cookie: token={{adminToken}}
+
+### VALIDATION TEST: invalid id should return 400
+GET {{baseUrl}}/tickets/abc
+Cookie: token={{userToken}}
+
+### NOT FOUND TEST: should return 404
+GET {{baseUrl}}/tickets/999999
+Cookie: token={{adminToken}}
+
+### Update subject / description (owner or staff)
+PATCH {{baseUrl}}/tickets/{{ticketId}}
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "subject": "Cannot download my ticket PDF (updated)",
+  "description": "After paying, the download button does nothing, even after refreshing."
+}
+
+### Update priority through the general update (staff only)
+PATCH {{baseUrl}}/tickets/{{ticketId}}
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "priority": "High"
+}
+
+### PERMISSION TEST: a normal user changing priority should return 403
+PATCH {{baseUrl}}/tickets/{{ticketId}}
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "priority": "Urgent"
+}
+
+### VALIDATION TEST: empty body should return 400
+PATCH {{baseUrl}}/tickets/{{ticketId}}
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{}
+
+### Change status (staff)
+PATCH {{baseUrl}}/tickets/{{ticketId}}/status
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "status": "In Progress"
+}
+
+### Waiting on customer
+PATCH {{baseUrl}}/tickets/{{ticketId}}/status
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "status": "Waiting on Customer"
+}
+
+### VALIDATION TEST: bad status should return 400
+PATCH {{baseUrl}}/tickets/{{ticketId}}/status
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "status": "Done"
+}
+
+### Change priority (staff)
+PATCH {{baseUrl}}/tickets/{{ticketId}}/priority
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "priority": "High"
+}
+
+### Assign to an agent (staff)
+PATCH {{baseUrl}}/tickets/{{ticketId}}/assign
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "assignedTo": {{assignedTo}}
+}
+
+### Remove the assignee (staff)
+PATCH {{baseUrl}}/tickets/{{ticketId}}/unassign
+Cookie: token={{organizerToken}}
+
+### Escalate to the platform (staff)
+POST {{baseUrl}}/tickets/{{ticketId}}/escalate
+Cookie: token={{organizerToken}}
+
+### Resolve (staff)
+POST {{baseUrl}}/tickets/{{ticketId}}/resolve
+Cookie: token={{organizerToken}}
+
+### Close (staff)
+POST {{baseUrl}}/tickets/{{ticketId}}/close
+Cookie: token={{organizerToken}}
+
+### Reopen (owner or staff)
+POST {{baseUrl}}/tickets/{{ticketId}}/reopen
+Cookie: token={{userToken}}
+
+### Delete a ticket (admin only, returns 204)
+DELETE {{baseUrl}}/tickets/{{ticketId}}
+Cookie: token={{adminToken}}
+
+
+### =====================================================================
+### RESPONSES
+### =====================================================================
+
+### Add a normal reply (any user with access to the ticket)
+# @name createReply
+POST {{baseUrl}}/tickets/{{ticketId}}/responses
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "message": "Here is a screenshot of the problem. It happens on Chrome and Safari."
+}
+
+### Add an internal note (staff only)
+POST {{baseUrl}}/tickets/{{ticketId}}/responses
+Cookie: token={{organizerToken}}
+Content-Type: {{json}}
+
+{
+  "message": "Checked the logs: payment went through but the PDF job failed.",
+  "isInternal": true
+}
+
+### PERMISSION TEST: a normal user posting an internal note should return 403
+POST {{baseUrl}}/tickets/{{ticketId}}/responses
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "message": "Trying to post an internal note.",
+  "isInternal": true
+}
+
+### VALIDATION TEST: empty message should return 400
+POST {{baseUrl}}/tickets/{{ticketId}}/responses
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "message": "   "
+}
+
+### List responses of a ticket
+GET {{baseUrl}}/tickets/{{ticketId}}/responses
+Cookie: token={{userToken}}
+
+### List responses including internal notes (only staff will see them)
+GET {{baseUrl}}/tickets/{{ticketId}}/responses?includeInternal=true
+Cookie: token={{organizerToken}}
+
+### Latest response
+GET {{baseUrl}}/tickets/{{ticketId}}/responses/latest
+Cookie: token={{userToken}}
+
+### Count responses
+GET {{baseUrl}}/tickets/{{ticketId}}/responses/count
+Cookie: token={{userToken}}
+
+### Get one response
+GET {{baseUrl}}/responses/{{responseId}}
+Cookie: token={{userToken}}
+
+### Responses written by a user
+GET {{baseUrl}}/users/{{digitalId}}/responses
+Cookie: token={{userToken}}
+
+### Edit a response (author or staff)
+PATCH {{baseUrl}}/responses/{{responseId}}
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "message": "Updated: it also fails on Firefox."
+}
+
+### Delete a response (author or staff, returns 204)
+DELETE {{baseUrl}}/responses/{{responseId}}
+Cookie: token={{userToken}}
+
+
+### =====================================================================
+### MEDIA
+### Note: these endpoints save file records (a URL you already uploaded),
+### they do not upload the file itself.
+### =====================================================================
+
+### Attach one file to the ticket
+POST {{baseUrl}}/tickets/{{ticketId}}/media
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "fileName": "error-screenshot.png",
+  "fileUrl": "https://example.com/uploads/error-screenshot.png",
+  "mimeType": "image/png",
+  "fileSize": 245760
+}
+
+### VALIDATION TEST: bad URL and file too large should return 400
+POST {{baseUrl}}/tickets/{{ticketId}}/media
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "fileName": "huge.zip",
+  "fileUrl": "not-a-url",
+  "mimeType": "application/zip",
+  "fileSize": 99999999999
+}
+
+### Attach several files at once (up to 20)
+POST {{baseUrl}}/tickets/{{ticketId}}/media/bulk
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "files": [
+    {
+      "fileName": "log.txt",
+      "fileUrl": "https://example.com/uploads/log.txt",
+      "mimeType": "text/plain",
+      "fileSize": 1024
+    },
+    {
+      "fileName": "invoice.pdf",
+      "fileUrl": "https://example.com/uploads/invoice.pdf",
+      "mimeType": "application/pdf",
+      "fileSize": 524288
+    }
+  ]
+}
+
+### Attach a file to a specific response
+POST {{baseUrl}}/tickets/{{ticketId}}/responses/{{responseId}}/media
+Cookie: token={{userToken}}
+Content-Type: {{json}}
+
+{
+  "fileName": "reply-photo.jpg",
+  "fileUrl": "https://example.com/uploads/reply-photo.jpg",
+  "mimeType": "image/jpeg",
+  "fileSize": 120000
+}
+
+### List all media of a ticket
+GET {{baseUrl}}/tickets/{{ticketId}}/media
+Cookie: token={{userToken}}
+
+### List only ticket-level files (not attached to responses)
+GET {{baseUrl}}/tickets/{{ticketId}}/media?ticketLevelOnly=true
+Cookie: token={{userToken}}
+
+### Media stats: file count and total bytes
+GET {{baseUrl}}/tickets/{{ticketId}}/media/stats
+Cookie: token={{userToken}}
+
+### Media of a response
+GET {{baseUrl}}/responses/{{responseId}}/media
+Cookie: token={{userToken}}
+
+### Get one media record
+GET {{baseUrl}}/media/{{mediaId}}
+Cookie: token={{userToken}}
+
+### Delete one media record (uploader or staff, returns 204)
+DELETE {{baseUrl}}/media/{{mediaId}}
+Cookie: token={{userToken}}
+
+### Delete ALL media of a ticket (staff)
+DELETE {{baseUrl}}/tickets/{{ticketId}}/media
+Cookie: token={{organizerToken}}

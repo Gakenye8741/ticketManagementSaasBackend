@@ -14,7 +14,8 @@ import {
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
+import { check } from "drizzle-orm/pg-core";
 
 // =======================
 // ENUMS
@@ -42,11 +43,9 @@ export const roleEnum = pgEnum("role", ["user", "admin", "organizer"]);
 export const orgRoleEnum = pgEnum("orgRole", ["owner", "admin", "manager","scanner"]);
 export const bookingStatusEnum = pgEnum("bookingStatus", ["Pending", "Confirmed", "Cancelled", "Refunded"]);
 export const paymentStatusEnum = pgEnum("paymentStatus", ["Pending", "Completed", "Failed", "Paid", "Refunded"]);
-export const ticketStatusEnum = pgEnum("status", ["Open", "In Progress", "Resolved", "Closed"]);
 export const venueStatusEnum = pgEnum("venueStatus", ["available", "booked"]);
 export const eventStatusEnum = pgEnum("eventStatus", ["in_progress", "ended", "cancelled", "upcoming"]);
 export const mediaTypeEnum = pgEnum("mediaType", ["image", "video"]);
-export const priorityEnum = pgEnum("priority", ["Low", "Medium", "High"]);
 export const payoutStatusEnum = pgEnum("payoutStatus", ["Pending", "Processing", "Completed", "Failed"]);
 export const transferStatusEnum = pgEnum("transferStatus", ["unassigned", "pending_claim", "transferred"]);
 export const notificationTypeEnum = pgEnum("notificationType", [
@@ -377,6 +376,147 @@ export const ticketTypes = pgTable("ticketTypes", {
   };
 });
 
+
+export const ticketStatusEnum = pgEnum("ticket_status", [
+  "Open",
+  "In Progress",
+  "Waiting on Customer",
+  "Resolved",
+  "Closed",
+]);
+
+export const priorityEnum = pgEnum("priority", [
+  "Low",
+  "Medium",
+  "High",
+  "Urgent",
+]);
+
+export const ticketScopeEnum = pgEnum("ticket_scope", [
+  "Organization", // handled by the organization's own team
+  "Platform", // handled by the platform superadmin
+]);
+
+// =======================
+// SUPPORT TICKETS
+// =======================
+
+export const supportTickets = pgTable(
+  "supportTickets",
+  {
+    ticketId: serial("ticketId").primaryKey(),
+
+    // Who created it
+    digitalId: integer("digitalId")
+      .references(() => users.digitalId, { onDelete: "cascade" })
+      .notNull(),
+
+    // Which organization it concerns (null for pure platform tickets)
+    orgId: integer("orgId").references(() => organizations.orgId, {
+      onDelete: "cascade",
+    }),
+
+    scope: ticketScopeEnum("scope").default("Organization").notNull(),
+
+    // Who is handling it
+    assignedTo: integer("assignedTo").references(() => users.digitalId, {
+      onDelete: "set null",
+    }),
+
+    // Escalation from organization to platform
+    escalatedAt: timestamp("escalatedAt"),
+    escalatedBy: integer("escalatedBy").references(() => users.digitalId, {
+      onDelete: "set null",
+    }),
+
+    subject: varchar("subject", { length: 255 }).notNull(),
+    description: text("description").notNull(),
+    status: ticketStatusEnum("status").default("Open").notNull(),
+    priority: priorityEnum("priority").default("Medium").notNull(),
+
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    resolvedAt: timestamp("resolvedAt"),
+  },
+  (table) => ({
+    userIdx: index("support_ticket_user_idx").on(table.digitalId),
+    orgIdx: index("support_ticket_org_idx").on(table.orgId),
+    statusIdx: index("support_ticket_status_idx").on(table.status),
+    assignedIdx: index("support_ticket_assigned_idx").on(table.assignedTo),
+    scopeStatusIdx: index("support_ticket_scope_status_idx").on(
+      table.scope,
+      table.status
+    ),
+    // An Organization-scoped ticket must belong to an organization
+    scopeOrgCheck: check(
+      "support_ticket_scope_org_check",
+      sql`${table.scope} = 'Platform' OR ${table.orgId} IS NOT NULL`
+    ),
+  })
+);
+
+// =======================
+// RESPONSES
+// =======================
+
+export const responses = pgTable(
+  "responses",
+  {
+    responseId: serial("responseId").primaryKey(),
+    ticketId: integer("ticketId")
+      .references(() => supportTickets.ticketId, { onDelete: "cascade" })
+      .notNull(),
+    digitalId: integer("digitalId")
+      .references(() => users.digitalId, { onDelete: "cascade" })
+      .notNull(),
+    message: text("message").notNull(),
+    isStaff: boolean("isStaff").default(false).notNull(),
+    isInternal: boolean("isInternal").default(false).notNull(), // hidden from the ticket owner
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    ticketCreatedIdx: index("response_ticket_created_idx").on(
+      table.ticketId,
+      table.createdAt
+    ),
+  })
+);
+
+// =======================
+// SUPPORT TICKETS MEDIA
+// =======================
+
+export const supportTicketsMedia = pgTable(
+  "supportTicketsMedia",
+  {
+    mediaId: serial("mediaId").primaryKey(),
+    ticketId: integer("ticketId")
+      .references(() => supportTickets.ticketId, { onDelete: "cascade" })
+      .notNull(),
+    // null = attached to the ticket itself, set = attached to a specific reply
+    responseId: integer("responseId").references(() => responses.responseId, {
+      onDelete: "cascade",
+    }),
+    uploadedBy: integer("uploadedBy")
+      .references(() => users.digitalId, { onDelete: "cascade" })
+      .notNull(),
+    fileName: varchar("fileName", { length: 255 }).notNull(),
+    fileUrl: text("fileUrl").notNull(), // URL or storage key
+    mimeType: varchar("mimeType", { length: 127 }).notNull(),
+    fileSize: integer("fileSize").notNull(), // bytes
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    ticketIdx: index("ticket_media_ticket_idx").on(table.ticketId),
+    responseIdx: index("ticket_media_response_idx").on(table.responseId),
+    sizeCheck: check("ticket_media_size_check", sql`${table.fileSize} > 0`),
+  })
+);
+
+
 // =======================
 // SAAS: PROMO CODES & DISCOUNTS
 // =======================
@@ -550,24 +690,7 @@ export const refunds = pgTable("refunds", {
   };
 });
 
-// =======================
-// SUPPORT TICKETS
-// =======================
 
-export const supportTickets = pgTable("supportTickets", {
-  ticketId: serial("ticketId").primaryKey(),
-  digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "cascade" }),
-  subject: varchar("subject", { length: 255 }).notNull(),
-  description: text("description").notNull(),
-  status: ticketStatusEnum("status").default("Open").notNull(),
-  priority: priorityEnum("priority").default("Medium").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-}, (table) => {
-  return {
-    userIdx: index("support_ticket_user_idx").on(table.digitalId),
-  };
-});
 
 // =======================
 // MEDIA (Event-Centric)
@@ -590,21 +713,7 @@ export const media = pgTable("media", {
   };
 });
 
-// =======================
-// RESPONSES
-// =======================
 
-export const responses = pgTable("responses", {
-  responseId: serial("responseId").primaryKey(),
-  ticketId: integer("ticketId").references(() => supportTickets.ticketId, { onDelete: "cascade" }).notNull(),
-  digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "cascade" }).notNull(),
-  message: text("message").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-}, (table) => {
-  return {
-    supportTicketIdx: index("response_support_ticket_idx").on(table.ticketId),
-  };
-});
 
 // =======================
 // TICKETS (Bundle Grouping & Transfer Lifecycle)
@@ -757,6 +866,7 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   scannerLogs: many(scannerLogs),
   auditLogs: many(auditLogs),
   verifications: many(organizerVerifications), // Added for corporate verification records
+  supportTickets: many(supportTickets),
 }));
 
 export const organizerVerificationsRelations = relations(organizerVerifications, ({ one }) => ({
@@ -912,13 +1022,7 @@ export const refundsRelations = relations(refunds, ({ one }) => ({
   }),
 }));
 
-export const supportTicketsRelations = relations(supportTickets, ({ one, many }) => ({
-  user: one(users, {
-    fields: [supportTickets.digitalId],
-    references: [users.digitalId],
-  }),
-  responses: many(responses),
-}));
+
 
 // =======================
 // MEDIA RELATIONS
@@ -931,7 +1035,47 @@ export const mediaRelations = relations(media, ({ one }) => ({
   }),
 }));
 
-export const responsesRelations = relations(responses, ({ one }) => ({
+
+
+// =======================
+// SUPPORT TICKETS RELATIONS
+// =======================
+
+export const supportTicketsRelations = relations(
+  supportTickets,
+  ({ one, many }) => ({
+    // Who created the ticket
+    user: one(users, {
+      fields: [supportTickets.digitalId],
+      references: [users.digitalId],
+      relationName: "ticketOwner",
+    }),
+    // Who is handling it
+    assignee: one(users, {
+      fields: [supportTickets.assignedTo],
+      references: [users.digitalId],
+      relationName: "ticketAssignee",
+    }),
+    // Who escalated it to the platform
+    escalator: one(users, {
+      fields: [supportTickets.escalatedBy],
+      references: [users.digitalId],
+      relationName: "ticketEscalator",
+    }),
+    organization: one(organizations, {
+      fields: [supportTickets.orgId],
+      references: [organizations.orgId],
+    }),
+    responses: many(responses),
+    media: many(supportTicketsMedia),
+  })
+);
+
+// =======================
+// RESPONSES RELATIONS
+// =======================
+
+export const responsesRelations = relations(responses, ({ one, many }) => ({
   ticket: one(supportTickets, {
     fields: [responses.ticketId],
     references: [supportTickets.ticketId],
@@ -940,7 +1084,30 @@ export const responsesRelations = relations(responses, ({ one }) => ({
     fields: [responses.digitalId],
     references: [users.digitalId],
   }),
+  media: many(supportTicketsMedia),
 }));
+
+// =======================
+// SUPPORT TICKETS MEDIA RELATIONS
+// =======================
+
+export const supportTicketsMediaRelations = relations(
+  supportTicketsMedia,
+  ({ one }) => ({
+    ticket: one(supportTickets, {
+      fields: [supportTicketsMedia.ticketId],
+      references: [supportTickets.ticketId],
+    }),
+    response: one(responses, {
+      fields: [supportTicketsMedia.responseId],
+      references: [responses.responseId],
+    }),
+    uploader: one(users, {
+      fields: [supportTicketsMedia.uploadedBy],
+      references: [users.digitalId],
+    }),
+  })
+);
 
 export const ticketsRelations = relations(tickets, ({ one, many }) => ({
   booking: one(bookings, {

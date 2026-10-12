@@ -32,6 +32,7 @@ import paymentRouter from './services/payments/payments.route';
 import TicketRouter from './services/tickets/ticket.route';
 import TicketTypeRouter from './services/TicketType/tickettype.route';
 import verificationRouter from './services/verification/verification.routes';
+import supportTicketsRouter from './services/Supportticketservices/Supporttickets.route';
 
 dotenv.config();
 
@@ -150,6 +151,7 @@ const apiRoutes = [
   { path: '/api', router: sendTicketEmailRoute },
   { path: '/api', router: MpesaRoute },
   { path: '/api', router: walletRouter },
+  { path: '/api/support', router: supportTicketsRouter },
 ];
 
 apiRoutes.forEach(({ path, router }) => {
