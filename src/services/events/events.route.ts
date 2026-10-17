@@ -34,8 +34,9 @@ import {
   adminAuth,
   optionalAuth,
 } from "../../middleware/bearAuth";
+import { getBookingPaymentStatus } from "../payments/Mpesa/Paystack.controller";
 
-import { getBookingPaymentStatus } from "../payments/Mpesa/Mpesa.controller";
+
 
 export const eventRouter = Router();
 

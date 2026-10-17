@@ -14,30 +14,31 @@ import {
   deletePayment,
   getEventTotalRevenue,
   getPlatformTotalEarnings,
-  getSuccessfulPaymentsCount
+  getSuccessfulPaymentsCount,
 } from "./payment.controller";
-import { createStripeCheckoutSession, getBookingPaymentStatus, handleStkPush, healthCheckHandler, mpesaCallbackHandler } from "./Mpesa/Mpesa.controller";
-import { stripeWebhookHandler } from "./payment.webhook";
-
-
+import {
+  getBookingPaymentStatus,
+  handlePaystackMpesa,
+  initializePaystackPayment,
+  verifyPaystackPayment,
+  paystackWebhookHandler,
+} from "./Mpesa/Paystack.controller";
 
 const paymentRouter = Router();
 
 // ==========================================
-// 🚀 GATEWAY, HEALTH & WEBHOOK ROUTES
+// 🚀 PAYSTACK GATEWAY & STATUS ROUTES
 // ==========================================
-paymentRouter.get("/health", healthCheckHandler);
-
-// 👇 Update this line to /booking-status/:bookingId
 paymentRouter.get("/booking-status/:bookingId", getBookingPaymentStatus);
 
-// M-Pesa Gateway Routes
-paymentRouter.post("/stk-push", handleStkPush);
-paymentRouter.post("/mpesa-callback", mpesaCallbackHandler);
+paymentRouter.post("/paystack/mpesa", handlePaystackMpesa);          // direct M-Pesa prompt
+paymentRouter.post("/paystack/initialize", initializePaystackPayment); // hosted checkout
+paymentRouter.get("/paystack/verify/:reference", verifyPaystackPayment);
 
-// Stripe Gateway Routes
-paymentRouter.post("/stripe/create-checkout-session", createStripeCheckoutSession);
-paymentRouter.post("/stripe/webhook", stripeWebhookHandler);
+// Webhook: needs the raw body. Make sure server.ts uses:
+// app.use(express.json({ verify: (req: any, _res, buf) => { req.rawBody = buf; } }));
+paymentRouter.post("/paystack/webhook", paystackWebhookHandler);
+
 // ==========================================
 // 📊 ANALYTICS & STATS ROUTES
 // ==========================================
@@ -48,17 +49,13 @@ paymentRouter.get("/analytics/successful-count", getSuccessfulPaymentsCount);
 // ==========================================
 // 📋 CORE PAYMENT CRUD & FILTER ROUTES
 // ==========================================
-
-// 1. Get All Payments & 9. Create Payment
 paymentRouter.get("/", getAllPayments);
 paymentRouter.post("/", createPayment);
 
-// 2. Get, 10. Update, & 12. Delete Payment by ID
 paymentRouter.get("/:id", getPaymentById);
 paymentRouter.put("/:id", updatePayment);
 paymentRouter.delete("/:id", deletePayment);
 
-// 11. Update Payment Status (Patch)
 paymentRouter.patch("/:id/status", updatePaymentStatus);
 
 // Specialized Filter Routes

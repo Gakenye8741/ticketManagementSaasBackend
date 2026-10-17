@@ -275,20 +275,38 @@ const creditWalletFromPayment = async (
 // 13. CREATE A NEW PAYMENT & AUTO-FUND WALLET (FINAL)
 // ==========================================
 export const createPaymentService = async (input: any) => {
+  let alreadyRecorded = false;
+
   const newPayment = await db.transaction(async (tx) => {
-    // 1. Fetch the booking with its event (to get the orgId)
+    // Serialize concurrent callers (webhook + status polling) for this booking
+    await tx
+      .select({ id: bookings.bookingId })
+      .from(bookings)
+      .where(eq(bookings.bookingId, input.bookingId))
+      .for("update");
+
+    // Already recorded for this reference? Return it, don't insert again
+    if (input.checkoutRequestId) {
+      const [duplicate] = await tx
+        .select()
+        .from(payments)
+        .where(eq(payments.checkoutRequestId, input.checkoutRequestId));
+
+      if (duplicate) {
+        alreadyRecorded = true;
+        return duplicate;
+      }
+    }
+
     const bookingRecord = await tx.query.bookings.findFirst({
       where: eq(bookings.bookingId, input.bookingId),
-      with: {
-        event: true,
-      },
+      with: { event: true },
     });
 
     if (!bookingRecord) {
       throw new Error(`Booking with ID ${input.bookingId} not found 🚫`);
     }
 
-    // 2. Resolve amount and organization ID
     const paymentAmount = Number(input.amount ?? bookingRecord.totalAmount);
     const organizationId = input.orgId ?? bookingRecord.event?.orgId;
 
@@ -296,10 +314,8 @@ export const createPaymentService = async (input: any) => {
       throw new Error(`Associated organization could not be found for booking ${input.bookingId} 🚫`);
     }
 
-    // 3. Platform fee & net amount using the organization's commission
     const { amount, platformFee, netAmount } = await resolveFees(tx, organizationId, paymentAmount);
 
-    // 4. Insert the payment record
     const [created] = await tx
       .insert(payments)
       .values({
@@ -312,10 +328,12 @@ export const createPaymentService = async (input: any) => {
         paymentMethod: input.paymentMethod,
         paymentStatus: input.paymentStatus ?? "Completed",
         transactionId: input.transactionId,
+        checkoutRequestId: input.checkoutRequestId,
+        resultCode: input.resultCode,
+        resultDesc: input.resultDesc,
       })
       .returning();
 
-    // 5. Fund the organizer's wallet (only if the payment is already Completed)
     if (created.paymentStatus === "Completed") {
       await creditWalletFromPayment(tx, created);
     }
@@ -323,8 +341,7 @@ export const createPaymentService = async (input: any) => {
     return created;
   });
 
-  // 🎯 After the transaction: deduct stock, make ALL tickets, email them to the payer
-  if (newPayment.paymentStatus === "Completed" && newPayment.bookingId) {
+  if (!alreadyRecorded && newPayment.paymentStatus === "Completed" && newPayment.bookingId) {
     try {
       await confirmBookingAfterPayment(newPayment.bookingId);
     } catch (err) {

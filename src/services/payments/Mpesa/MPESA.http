@@ -1,62 +1,105 @@
 ### Variables
+# Adjust @paymentsUrl to wherever your paymentRouter is mounted (e.g. /api/payments)
 @baseUrl = http://localhost:5000/api
-@phoneNumber = 254112310754
-@bookingId = 68
-@amount = 1
+@paymentsUrl = {{baseUrl}}/payments
+@phoneNumber = 0710000000
+@bookingId = 115
+@email = test@example.com
 
-### 1. Initiate STK Push
-# This triggers the "Enter PIN" prompt on the phone number provided.
-# Ensure your server is running and your .env has valid M-Pesa credentials.
-POST {{baseUrl}}/mpesa/stk-push
+### 1. Direct M-Pesa prompt (replaces STK Push)
+# Sends the "Enter PIN" prompt to the phone. Amount comes from the booking in the DB.
+# Needs PAYSTACK_SECRET_KEY in .env and M-Pesa enabled on your Paystack account.
+# Copy the "reference" from the response into @reference below.
+###
+POST {{paymentsUrl}}/paystack/mpesa
 Content-Type: application/json
 
 {
-  "amount": {{amount}},
   "phoneNumber": "{{phoneNumber}}",
-  "bookingId": {{bookingId}}
+  "bookingId": {{bookingId}},
+  "email": "{{email}}"
 }
 
 
-### 2. Mock M-Pesa Success Callback
-# Use this to test your 'mpesaCallbackHandler' logic locally.
-# This simulates Safaricom telling your server the payment was SUCCESSFUL.
-# Replace 'CheckoutRequestID' with the one returned from the STK Push above if testing full flow.
-POST {{baseUrl}}/mpesa-callback
+### 2. Hosted checkout (M-Pesa + card)
+# Returns "authorizationUrl". Open it in the browser to pay.
+POST {{paymentsUrl}}/paystack/initialize
 Content-Type: application/json
 
 {
-  "Body": {
-    "stkCallback": {
-      "MerchantRequestID": "29115-3462711-1",
-      "CheckoutRequestID": "ws_CO_02042026_TEST_123",
-      "ResultCode": 0,
-      "ResultDesc": "The service request is processed successfully.",
-      "CallbackMetadata": {
-        "Item": [
-          { "Name": "Amount", "Value": {{amount}} },
-          { "Name": "MpesaReceiptNumber", "Value": "RDK2X3P4Z5" },
-          { "Name": "TransactionDate", "Value": 20260402222528 },
-          { "Name": "PhoneNumber", "Value": {{phoneNumber}} }
-        ]
-      }
-    }
+  "bookingId": {{bookingId}},
+  "email": "{{email}}"
+}
+
+
+### 3. Verify a payment (use the reference from step 1 or 2)
+# This is the backup if the webhook is late. It records success or failure.
+@reference = TS-115-1791997364980
+GET {{paymentsUrl}}/paystack/verify/{{reference}}
+
+
+### 4. Check booking status (your existing endpoint, unchanged)
+GET {{paymentsUrl}}/booking-status/{{bookingId}}
+
+
+### 5. Webhook test
+# The webhook needs a valid x-paystack-signature (HMAC SHA512 of the raw body),
+# which a .http file can't compute. Use the script instead:
+#   node paystack-webhook-test.js <reference>
+# Use a REAL test-mode reference from step 1 or 2: the server re-verifies
+# with Paystack, so a made-up reference will be ignored.
+#
+# Unsigned request, should be rejected with 401:
+### 5. Webhook test (Unsigned request, should be rejected with 401)
+# POST http://localhost:5000/api/payments/paystack/webhook
+# Content-Type: application/json
+# x-paystack-signature: a6bc5ebc15f7f50c4c758d4528dd50bfcc61e7aed8a65296d6932c2c8672d79e93f4cffdf7e2bcd2e03191cf2a060cbcc512ccf237f86baf7ef042c702a0782e
+
+# { 
+#   "event": "charge.success", 
+#   "data": { "reference": "{{reference}}" } 
+# }
+
+POST http://localhost:5000/api/payments/paystack/webhook
+Content-Type: application/json
+x-paystack-signature: a6bc5ebc15f7f50c4c758d4528dd50bfcc61e7aed8a65296d6932c2c8672d79e93f4cffdf7e2bcd2e03191cf2a060cbcc512ccf237f86baf7ef042c702a0782e
+
+{
+  "event": "charge.success",
+  "data": {
+    "reference": "TS-115-1791997364980"
   }
 }
 
 
-### 3. Mock M-Pesa Cancelled/Failed Callback
-# Use this to test how your server handles a user cancelling the transaction.
-# It should log the failure but NOT trigger a ticket email.
-POST {{baseUrl}}/mpesa-callback
+### Variables
+@baseUrl = http://localhost:5000/api/payments
+@ngrokUrl = https://unsunburned-succulently-markita.ngrok-free.dev/api/payments
+@bookingId = 122
+# Copy the reference from the bookings table (checkout_request_id), e.g. TS-122-1792009610531
+@reference = TS-122-1792009610531
+
+
+### STEP 5: is the webhook route reachable through ngrok?
+# Expected: 401 {"error":"Missing signature"}
+# 404 = wrong URL path, 400 = body parsing problem
+POST {{ngrokUrl}}/paystack/webhook
 Content-Type: application/json
 
-{
-  "Body": {
-    "stkCallback": {
-      "MerchantRequestID": "29115-3462711-1",
-      "CheckoutRequestID": "ws_CO_02042026_TEST_123",
-      "ResultCode": 1032,
-      "ResultDesc": "Request cancelled by user."
-    }
-  }
-}
+{}
+
+
+### STEP 7a: ask Paystack for the real payment status (this also records the payment)
+# Expected when paid: {"reference":"TS-...","status":"success"}
+GET {{baseUrl}}/paystack/verify/{{reference}}
+
+
+### STEP 7b: what the frontend polls (should show "Confirmed" after success)
+GET {{baseUrl}}/booking-status/{{bookingId}}
+
+
+### Local test (expected: 401 {"error":"Missing signature"})
+POST http://localhost:5000/api/payments/paystack/webhook
+Content-Type: application/json
+
+{}

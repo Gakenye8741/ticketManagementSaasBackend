@@ -6,6 +6,7 @@
 # @baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api/auth
 @adminEmail =  codewithgakenye@gmail.com
 @organizerEmail = programminggakenye@gmail.com
+@organizer1Email = ndiritugakenye@gmail.com
 @userEmail = brayogakenye04@gmail.com
 
 ### 1. Register User
@@ -13,13 +14,13 @@ POST {{baseUrl}}/register
 Content-Type: application/json
 
 {
-  "firstName": "admin",
+  "firstName": "Organizer2",
   "lastName": "Gakenye",
-  "email": "{{adminEmail}}",
+  "email": "{{organizer1Email}}",
   "password": "Gakenye123#",
-  "contactPhone": "+254112310754",
+  "contactPhone": "+254112310757",
   "address": "Nyeri, Kenya",
-  "role": "admin"
+  "role": "organizer"
 }
 
 ### 2. Verify Email (OTP)
@@ -28,7 +29,7 @@ Content-Type: application/json
 
 {
   "email": "{{adminEmail}}",
-  "otp": "214130"
+  "otp": "786745"
 }
 
 ### 3. Login User

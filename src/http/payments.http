@@ -33,6 +33,8 @@ Content-Type: application/json
   "quantity": 1
 }
 
+###
+curl http://localhost:5000/api/payments/paystack/verify/TS-122-1792009610531
 
 ### ==========================================
 ### 📊 ANALYTICS & STATS ROUTES
@@ -42,7 +44,7 @@ Content-Type: application/json
 GET {{baseUrl}}/analytics/platform-earnings
 
 ### 6. Get Event Total Revenue
-GET {{baseUrl}}/analytics/event-revenue/1
+GET {{baseUrl}}/analytics/event-revenue/14
 
 ### 7. Get Successful Payments Count
 GET {{baseUrl}}/analytics/successful-count
@@ -110,7 +112,7 @@ GET {{baseUrl}}/booking/{{bookingId}}
 GET {{baseUrl}}/event/1
 
 ### 15. Filter Payments by Organization ID
-GET {{baseUrl}}/org/1
+GET {{baseUrl}}/org/4
 
 ### 16. Filter Payments by User Digital ID
 GET {{baseUrl}}/user/1

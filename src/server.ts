@@ -22,7 +22,6 @@ import { bookingRouter } from './services/bookings/bookings.route';
 import mediaRouter from './services/media/media.route';
 import responseRoute from './services/AdminResponses/response.route';
 import sendTicketEmailRoute from './middleware/emailTicket';
-import MpesaRoute from './services/payments/Mpesa/Mpesa.route';
 import qrTicketRoutes from './services/qrcodeTickets/qrcode.route';
 import { webhookHandler } from './services/payments/payment.webhook';
 import OrgRouter from './services/Organization/Organization.route';
@@ -33,6 +32,8 @@ import TicketRouter from './services/tickets/ticket.route';
 import TicketTypeRouter from './services/TicketType/tickettype.route';
 import verificationRouter from './services/verification/verification.routes';
 import supportTicketsRouter from './services/Supportticketservices/Supporttickets.route';
+import paystackRouter from './services/payments/Mpesa/Paystack.route';
+import { paystackWebhookHandler } from './services/payments/Mpesa/Paystack.controller';
 
 dotenv.config();
 
@@ -50,10 +51,13 @@ const loggerInstance = pino({
 // Trust proxy if running behind Nginx / Cloudflare load balancer
 app.set('trust proxy', 1);
 
-// ==========================================
-// 1. WEBHOOKS (Must be raw before global json parser)
-// ==========================================
-app.post("/api/payment/webhook", express.raw({ type: "application/json" }), webhookHandler);
+// Place this BEFORE any global express.json() middleware if possible, 
+// or ensure it intercepts the route cleanly.
+app.post(
+  "/api/payments/paystack/webhook",
+  express.raw({ type: "application/json" }),
+  paystackWebhookHandler
+);
 
 // ==========================================
 // 2. SECURITY, COMPRESSION & GLOBAL MIDDLEWARE
@@ -149,7 +153,7 @@ const apiRoutes = [
   { path: '/api', router: bookingRouter },
   { path: '/api', router: responseRoute },
   { path: '/api', router: sendTicketEmailRoute },
-  { path: '/api', router: MpesaRoute },
+  { path: '/api/payments', router: paystackRouter},
   { path: '/api', router: walletRouter },
   { path: '/api/support', router: supportTicketsRouter },
 ];
