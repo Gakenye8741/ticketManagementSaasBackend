@@ -155,7 +155,7 @@ GET {{baseUrl}}/bookings/recent
 Cookie: token={{token}}
 
 ### 15. Get Bookings by User Digital ID (Protected)
-GET {{baseUrl}}/bookings/user/{{digitalId}}
+GET {{baseUrl}}/bookings/user/821100399
 Cookie: token={{token}}
 
 ### 16. Get Bookings by Event ID (Admin or Organizer)

@@ -624,6 +624,8 @@ export const bookings = pgTable("bookings", {
   updatedAt: timestamp("updatedAt")
     .defaultNow()
     .notNull(),
+    serviceFee: decimal("serviceFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
+    totalCharged: decimal("totalCharged", { precision: 10, scale: 2 }).notNull().default("0.00"),
 }, (table) => {
   return {
     userIdx: index("booking_user_idx").on(table.digitalId),

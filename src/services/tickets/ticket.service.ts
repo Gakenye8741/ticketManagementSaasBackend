@@ -33,6 +33,7 @@ const getDisplayName = async (
  * Emails the ticket to its current attendee.
  * A failed email must NEVER undo an assignment/claim that already succeeded,
  * so errors are logged and swallowed.
+ * UPDATED: a refunded (non-Valid) ticket is never emailed.
  */
 const notifyTicketAttendee = async (
   ticketId: number,
@@ -40,6 +41,13 @@ const notifyTicketAttendee = async (
   fromName?: string
 ) => {
   try {
+    const [t] = await db
+      .select()
+      .from(tickets)
+      .where(eq(tickets.ticketId, ticketId));
+
+    if (!t || t.lifecycleStatus !== "Valid") return; // never email a refunded ticket
+
     await emailSingleTicketService(ticketId, reason, { fromName });
   } catch (error: any) {
     console.error(
@@ -62,6 +70,19 @@ const assertCanManage = (ticket: TSelectTicket, actorDigitalId?: number) => {
   if (owner !== actorDigitalId) {
     throw new Error("Unauthorized: You do not own this ticket 🛡️");
   }
+};
+
+/**
+ * NEW: Refunded (or otherwise non-Valid) tickets can't be used,
+ * assigned, transferred or emailed.
+ */
+const assertTicketValid = (ticket: TSelectTicket) => {
+  if (ticket.lifecycleStatus === "Valid") return;
+  throw new Error(
+    ticket.lifecycleStatus === "Refunded"
+      ? "This ticket has been refunded and is no longer valid 🚫"
+      : `This ticket is ${ticket.lifecycleStatus} and can't be changed 🚫`
+  );
 };
 
 // ==========================================
@@ -444,6 +465,7 @@ export const getTicketsByEventId = async (
 
 // ==========================================
 // 6. GET TICKETS BY HOLDER ID
+// (refunded tickets are still returned so the app can show a "Refunded" badge)
 // ==========================================
 export const getTicketsByHolderId = async (
   digitalId: number
@@ -478,6 +500,7 @@ export const getTicketsByPurchaserId = async (
 //   left alone (it used to be set to "pending_claim", which made
 //   every assigned ticket look like a pending transfer).
 // - Pass the logged-in user's digitalId as `actorDigitalId`.
+// - UPDATED: refunded tickets can't be assigned.
 // ==========================================
 
 type AttendeeInput = { name: string; email: string; phone?: string };
@@ -528,6 +551,7 @@ export const assignTicket = async (
   if (!ticket) throw new Error("Ticket not found 🚫");
 
   assertCanManage(ticket, actorDigitalId);
+  assertTicketValid(ticket);
 
   if (ticket.isScanned) {
     throw new Error("This ticket has already been scanned and can't be changed 🚫");
@@ -580,6 +604,7 @@ export const bulkAssignBundleTickets = async (
     if (!ticket) continue;
 
     assertCanManage(ticket, actorDigitalId);
+    assertTicketValid(ticket);
 
     if (ticket.isScanned) {
       throw new Error(`Ticket ${ticket.ticketId} has already been scanned and can't be changed 🚫`);
@@ -624,6 +649,8 @@ export const initiateTicketTransfer = async (
     throw new Error("Unauthorized: You do not own this ticket 🛡️");
   }
 
+  assertTicketValid(ticket);
+
   if (ticket.isScanned) {
     throw new Error("This ticket has already been scanned and can't be transferred 🚫");
   }
@@ -659,6 +686,7 @@ export const initiateTicketTransfer = async (
 // - The claim is a single atomic update: two people using the same
 //   code at the same time can't both win.
 // - Scanned tickets and claiming your own ticket are refused.
+// - UPDATED: refunded tickets can't be claimed.
 // - `newHolderDigitalId` must come from the verified login token.
 // ==========================================
 export const claimTransferredTicket = async (
@@ -672,6 +700,8 @@ export const claimTransferredTicket = async (
     .where(eq(tickets.claimToken, claimToken));
 
   if (!ticket) throw new Error("Invalid or expired claim token 🚫");
+
+  assertTicketValid(ticket);
 
   if (
     ticket.claimTokenExpiresAt &&
@@ -706,17 +736,18 @@ export const claimTransferredTicket = async (
       claimedAt: new Date(),
       updatedAt: new Date(),
     })
-    // Matching on the claim token again makes this atomic
+    // Matching on the claim token and status again makes this atomic
     .where(
       and(
         eq(tickets.ticketId, ticket.ticketId),
-        eq(tickets.claimToken, claimToken)
+        eq(tickets.claimToken, claimToken),
+        eq(tickets.lifecycleStatus, "Valid")
       )
     )
     .returning();
 
   if (!claimedTicket) {
-    throw new Error("This claim code has already been used 🚫");
+    throw new Error("This claim code has already been used or the ticket is no longer valid 🚫");
   }
 
   // Email the new holder their ticket and link
@@ -728,6 +759,12 @@ export const claimTransferredTicket = async (
 
 // ==========================================
 // 12. SCAN TICKET AT GATE
+// ------------------------------------------
+// UPDATED:
+// - Refunded (non-Valid) tickets are refused at the gate.
+// - The check-in is atomic: it only succeeds if the ticket is
+//   still Valid and not yet scanned, so a scan and a refund
+//   approval can never both win.
 // ==========================================
 export const scanTicket = async (
   ticketToken: string
@@ -748,6 +785,17 @@ export const scanTicket = async (
     };
   }
 
+  if (ticket.lifecycleStatus !== "Valid") {
+    return {
+      success: false,
+      message:
+        ticket.lifecycleStatus === "Refunded"
+          ? "This ticket was refunded and is no longer valid 🚫"
+          : `This ticket is ${ticket.lifecycleStatus} and can't be used 🚫`,
+      ticket,
+    };
+  }
+
   if (ticket.isScanned) {
     return {
       success: false,
@@ -758,6 +806,7 @@ export const scanTicket = async (
     };
   }
 
+  // Atomic: only succeeds if still Valid and not yet scanned
   const [scannedTicket] = await db
     .update(tickets)
     .set({
@@ -765,8 +814,21 @@ export const scanTicket = async (
       scannedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(tickets.ticketId, ticket.ticketId))
+    .where(
+      and(
+        eq(tickets.ticketId, ticket.ticketId),
+        eq(tickets.isScanned, false),
+        eq(tickets.lifecycleStatus, "Valid")
+      )
+    )
     .returning();
+
+  if (!scannedTicket) {
+    return {
+      success: false,
+      message: "Ticket could not be checked in (just scanned or refunded) ⚠️",
+    };
+  }
 
   return {
     success: true,
@@ -780,6 +842,7 @@ export const scanTicket = async (
 // ------------------------------------------
 // NEW: only the current holder can unassign, and unassigning also
 // cancels any pending transfer (the claim code stops working).
+// UPDATED: refunded tickets can't be unassigned.
 // ==========================================
 export const unassignTicket = async (
   ticketId: number,
@@ -793,6 +856,7 @@ export const unassignTicket = async (
   if (!ticket) throw new Error("Ticket not found 🚫");
 
   assertCanManage(ticket, ownerId);
+  assertTicketValid(ticket);
 
   const [updated] = await db
     .update(tickets)
@@ -859,11 +923,20 @@ export const countScannedAttendees = async (
 
 // ==========================================
 // 17. UPDATE TICKET HOLDER
+// UPDATED: refunded tickets can't change holder.
 // ==========================================
 export const updateTicketHolder = async (
   ticketId: number,
   newDigitalId: number
 ): Promise<TSelectTicket> => {
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketId, ticketId));
+
+  if (!ticket) throw new Error("Ticket not found 🚫");
+  assertTicketValid(ticket);
+
   const [updated] = await db
     .update(tickets)
     .set({
@@ -878,10 +951,19 @@ export const updateTicketHolder = async (
 
 // ==========================================
 // 18. RESET TICKET SCAN
+// UPDATED: a refunded ticket can't be un-scanned.
 // ==========================================
 export const resetTicketScan = async (
   ticketId: number
 ): Promise<TSelectTicket> => {
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.ticketId, ticketId));
+
+  if (!ticket) throw new Error("Ticket not found 🚫");
+  assertTicketValid(ticket);
+
   const [updated] = await db
     .update(tickets)
     .set({
@@ -909,6 +991,7 @@ export const deleteTicket = async (ticketId: number): Promise<boolean> => {
 
 // ==========================================
 // 20. GET UNASSIGNED USER TICKETS
+// UPDATED: refunded tickets are not listed as tickets to assign.
 // ==========================================
 export const getUnassignedUserTickets = async (
   digitalId: number
@@ -919,7 +1002,8 @@ export const getUnassignedUserTickets = async (
     .where(
       and(
         eq(tickets.digitalId, digitalId),
-        eq(tickets.isAssigned, false)
+        eq(tickets.isAssigned, false),
+        eq(tickets.lifecycleStatus, "Valid")
       )
     );
 };

@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import db from "../../../drizzle/db";
 import { bookings, events, payments, mpesaLogs } from "../../../drizzle/schema";
-import { createPaymentService } from "../payment.service";
+import { createPaymentService, computeBookingCharge } from "../payment.service"; // 🆕 computeBookingCharge
 import {
   initializeTransaction,
   chargeMpesa,
@@ -56,12 +56,19 @@ const settlePaystackResult = async (opts: {
   const booking = await findBookingByReference(reference);
   if (!booking) throw new Error(`No booking found for reference ${reference}`);
 
-  // Never trust the amount blindly: must cover the booking total
-  if (success && paidAmount + 0.01 < Number(booking.totalAmount)) {
+  // 🆕 Never trust the amount blindly: must cover tickets + service fee.
+  // Older bookings (made before the fee columns existed) have totalCharged = 0,
+  // so they fall back to the ticket total.
+  const expectedTotal =
+    Number(booking.totalCharged) > 0
+      ? Number(booking.totalCharged)
+      : Number(booking.totalAmount);
+
+  if (success && paidAmount + 0.01 < expectedTotal) {
     console.error(
-      `🚨 Amount mismatch for ${reference}: paid ${paidAmount}, expected ${booking.totalAmount}`
+      `🚨 Amount mismatch for ${reference}: paid ${paidAmount}, expected ${expectedTotal}`
     );
-    throw new Error("Paid amount is less than booking total");
+    throw new Error("Paid amount is less than the amount due");
   }
 
   let orgId: number | null = null;
@@ -75,7 +82,9 @@ const settlePaystackResult = async (opts: {
     bookingId: booking.bookingId,
     orgId,
     digitalId: booking.digitalId ?? null,
-    amount: success ? String(booking.totalAmount) : "0",
+    amount: success ? String(booking.totalAmount) : "0", // ticket amount only (commission base)
+    serviceFee: success ? String(booking.serviceFee) : "0.00", // 🆕 fee charged at checkout
+    totalCharged: success ? String(booking.totalCharged) : "0.00", // 🆕 tickets + fee
     paymentStatus: success ? "Completed" : "Failed",
     paymentMethod: "Paystack",
     transactionId,
@@ -119,25 +128,31 @@ export const initializePaystackPayment = async (req: Request, res: Response) => 
     if (!payerEmail) return void res.status(400).json({ error: "Email is required 🚫" });
 
     const reference = makeReference(booking.bookingId);
-    const amount = Number(booking.totalAmount); // always from DB, never the client
+
+    // 🆕 Tickets come from the DB, the fee is calculated server-side (never from the client)
+    const { serviceFee, totalCharged } = await computeBookingCharge(booking.totalAmount);
 
     const init = await initializeTransaction({
       email: payerEmail,
-      amount,
+      amount: Number(totalCharged), // 🆕 tickets + service fee
       reference,
       bookingId: booking.bookingId,
       callbackUrl: `${process.env.FRONTEND_URL || "http://localhost:5173"}/payment/verify`,
     });
 
+    // 🆕 Save the fee with the reference so verification and settlement use the same numbers
     await db
       .update(bookings)
-      .set({ checkoutRequestId: reference })
+      .set({ checkoutRequestId: reference, serviceFee, totalCharged })
       .where(eq(bookings.bookingId, booking.bookingId));
 
     res.status(200).json({
       success: true,
       authorizationUrl: init.authorization_url,
       reference,
+      ticketAmount: booking.totalAmount,
+      serviceFee,
+      totalCharged,
     });
   } catch (error: any) {
     console.error("❌ Paystack initialize error:", error.message);
@@ -171,15 +186,18 @@ export const handlePaystackMpesa = async (req: Request, res: Response) => {
 
     const reference = makeReference(booking.bookingId);
 
-    // Save the reference BEFORE charging so the webhook can always find it
+    // 🆕 Tickets come from the DB, the fee is calculated server-side (never from the client)
+    const { serviceFee, totalCharged } = await computeBookingCharge(booking.totalAmount);
+
+    // Save the reference AND the fee BEFORE charging so the webhook can always find them
     await db
       .update(bookings)
-      .set({ checkoutRequestId: reference })
+      .set({ checkoutRequestId: reference, serviceFee, totalCharged })
       .where(eq(bookings.bookingId, booking.bookingId));
 
     const charge = await chargeMpesa({
       email: payerEmail,
-      amount: Number(booking.totalAmount),
+      amount: Number(totalCharged), // 🆕 tickets + service fee
       phone,
       reference,
       bookingId: booking.bookingId,
@@ -190,10 +208,41 @@ export const handlePaystackMpesa = async (req: Request, res: Response) => {
       message: charge.display_text || "M-Pesa prompt sent. Enter your PIN 📱💳",
       reference,
       status: charge.status,
+      ticketAmount: booking.totalAmount,
+      serviceFee,
+      totalCharged,
     });
   } catch (error: any) {
     console.error("❌ Paystack M-Pesa error:", error.message);
     res.status(500).json({ error: error.message || "Failed to start M-Pesa payment" });
+  }
+};
+
+// ------------------------------------------------------
+// 🆕 GET /bookings/:bookingId/checkout-totals
+// The frontend should display these numbers instead of calculating the fee itself,
+// so what the customer sees is exactly what gets charged.
+// ------------------------------------------------------
+export const getCheckoutTotals = async (req: Request, res: Response) => {
+  try {
+    const booking = await loadBooking(Number(req.params.bookingId));
+    if (!booking) return void res.status(404).json({ error: "Booking not found 🔍" });
+
+    const { serviceFee, totalCharged, serviceFeePercent } = await computeBookingCharge(
+      booking.totalAmount
+    );
+
+    res.status(200).json({
+      bookingId: booking.bookingId,
+      quantity: booking.quantity,
+      ticketAmount: Number(booking.totalAmount).toFixed(2),
+      serviceFee,
+      totalCharged,
+      serviceFeePercent,
+    });
+  } catch (error: any) {
+    console.error("❌ Checkout totals error:", error.message);
+    res.status(500).json({ error: error.message || "Failed to get checkout totals" });
   }
 };
 
