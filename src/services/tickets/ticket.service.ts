@@ -1,4 +1,4 @@
-import { bookings, tickets, TSelectTicket, users } from "../../drizzle/schema";
+import { bookings, tickets, bookingItems, TSelectTicket, users } from "../../drizzle/schema";
 import { eq, and, count } from "drizzle-orm";
 import crypto from "node:crypto";
 import db from "../../drizzle/db";
@@ -88,11 +88,15 @@ const assertTicketValid = (ticket: TSelectTicket) => {
 // ==========================================
 // GENERATE TICKETS FOR A BOOKING
 // ------------------------------------------
-// - Booking quantity 5 = exactly 5 tickets
+// - Multi-ticket aware: each ticket is stamped with
+//   bookingItemId + ticketTypeId + ticketTypeName so the
+//   ticket type survives renames/deletions.
+// - Booking quantity 5 = exactly 5 tickets (or the sum
+//   of bookingItems quantities if items exist).
 // - Every ticket initially belongs to the payer
 // - Tickets can later be assigned/transferred
 // - Idempotent: calling this multiple times will
-//   never intentionally create more than booking.quantity
+//   never intentionally create more than the total needed
 // - If ticket creation was interrupted, missing
 //   tickets are created on the next call
 // - Each ticket uses its corresponding attendee
@@ -103,12 +107,12 @@ export const generateTicketsForBooking = async (
   bookingId: number
 ): Promise<TSelectTicket[]> => {
   // ------------------------------------------
-  // 1. Get booking
+  // 1. Get booking WITH its cart items (multi-ticket)
   // ------------------------------------------
-  const [booking] = await db
-    .select()
-    .from(bookings)
-    .where(eq(bookings.bookingId, bookingId));
+  const booking = await db.query.bookings.findFirst({
+    where: eq(bookings.bookingId, bookingId),
+    with: { items: true },
+  });
 
   if (!booking) {
     throw new Error("Booking not found 🚫");
@@ -118,9 +122,40 @@ export const generateTicketsForBooking = async (
     throw new Error("Event ID is missing for this booking 🚫");
   }
 
-  const quantity = Number(booking.quantity);
+  // ------------------------------------------
+  // 1a. Build the ticket plan from bookingItems (or fall back to the legacy header)
+  // ------------------------------------------
+  type TicketPlan = {
+    bookingItemId: number | null;
+    ticketTypeId: number | null;
+    ticketTypeName: string | null;
+    quantity: number;
+  };
 
-  if (!Number.isInteger(quantity) || quantity <= 0) {
+  const plan: TicketPlan[] = booking.items?.length
+    ? booking.items.map((i) => ({
+        bookingItemId: i.bookingItemId,
+        ticketTypeId: i.ticketTypeId,
+        ticketTypeName: i.ticketTypeName,
+        quantity: Number(i.quantity),
+      }))
+    : booking.ticketTypeId != null
+      ? [{
+          bookingItemId: null,
+          ticketTypeId: booking.ticketTypeId,
+          ticketTypeName: booking.ticketTypeName ?? null,
+          quantity: Number(booking.quantity),
+        }]
+      : [];
+
+  if (plan.length === 0) {
+    throw new Error(`Booking ${bookingId} has no ticket lines 🚫`);
+  }
+
+  // Total tickets we need to generate
+  const totalNeeded = plan.reduce((sum, p) => sum + p.quantity, 0);
+
+  if (!Number.isInteger(totalNeeded) || totalNeeded <= 0) {
     throw new Error(
       `Invalid booking quantity for booking ${bookingId}: ${booking.quantity}`
     );
@@ -136,9 +171,9 @@ export const generateTicketsForBooking = async (
 
   // If the correct number already exists,
   // simply return them.
-  if (existingTickets.length >= quantity) {
+  if (existingTickets.length >= totalNeeded) {
     console.log(
-      `🎟️ Booking ${bookingId} already has ${existingTickets.length}/${quantity} tickets.`
+      `🎟️ Booking ${bookingId} already has ${existingTickets.length}/${totalNeeded} tickets.`
     );
 
     return existingTickets;
@@ -172,32 +207,21 @@ export const generateTicketsForBooking = async (
   // ------------------------------------------
   // 4. Get individual attendee details
   // ------------------------------------------
-  //
-  // Booking attendees are mapped to tickets by index:
-  //
-  // attendees[0] -> Ticket 1
-  // attendees[1] -> Ticket 2
-  // attendees[2] -> Ticket 3
-  // ...
-  //
-  // If an attendee is missing, the payer details
-  // are used as a fallback.
-  //
   const attendees = Array.isArray(booking.attendees)
     ? booking.attendees
     : [];
 
   console.log(
-    `👥 Booking ${bookingId}: ${attendees.length}/${quantity} attendee detail(s) found.`
+    `👥 Booking ${bookingId}: ${attendees.length}/${totalNeeded} attendee detail(s) found.`
   );
 
   // ------------------------------------------
   // 5. Calculate how many tickets are missing
   // ------------------------------------------
-  const missingTickets = quantity - existingTickets.length;
+  const missingTickets = totalNeeded - existingTickets.length;
 
   console.log(
-    `🎟️ Booking ${bookingId}: ${existingTickets.length}/${quantity} tickets exist.`
+    `🎟️ Booking ${bookingId}: ${existingTickets.length}/${totalNeeded} tickets exist.`
   );
 
   console.log(
@@ -207,23 +231,33 @@ export const generateTicketsForBooking = async (
   // ------------------------------------------
   // 6. Reuse existing bundle ID if one exists
   // ------------------------------------------
-  //
-  // For example:
-  //
-  // Booking 100
-  // ├── Ticket 1 → BUNDLE-ABC
-  // ├── Ticket 2 → BUNDLE-ABC
-  // ├── Ticket 3 → BUNDLE-ABC
-  //
-  // This allows the tickets to remain associated
-  // as part of the same purchase.
-  //
   let groupBundleId: string | null = null;
 
-  if (quantity > 1) {
+  if (totalNeeded > 1) {
     groupBundleId =
       existingTickets.find((ticket) => ticket.groupBundleId)
         ?.groupBundleId ?? `BUNDLE-${crypto.randomUUID()}`;
+  }
+
+  // ------------------------------------------
+  // 6a. Expand the plan into a flat list of "slots" — one entry per ticket.
+  //     Each slot carries its bookingItemId + ticket type, so we can stamp
+  //     the ticket type onto the correct individual ticket.
+  // ------------------------------------------
+  const slots: Array<{
+    bookingItemId: number | null;
+    ticketTypeId: number | null;
+    ticketTypeName: string | null;
+  }> = [];
+
+  for (const p of plan) {
+    for (let k = 0; k < p.quantity; k++) {
+      slots.push({
+        bookingItemId: p.bookingItemId,
+        ticketTypeId: p.ticketTypeId,
+        ticketTypeName: p.ticketTypeName,
+      });
+    }
   }
 
   // ------------------------------------------
@@ -231,41 +265,20 @@ export const generateTicketsForBooking = async (
   // ------------------------------------------
   //
   // IMPORTANT:
-  //
-  // We use the ticket's original position in the
-  // booking to select the correct attendee.
-  //
-  // Example:
-  //
-  // quantity = 2
-  // existingTickets = 0
-  //
-  // Ticket 1 -> attendees[0]
-  // Ticket 2 -> attendees[1]
-  //
-  // If one ticket already exists:
-  //
-  // existingTickets = 1
-  //
-  // New Ticket -> attendees[1]
+  // The attendee index is based on the ticket's original position
+  // in the whole order (existingTickets.length + index). This keeps
+  // attendee ↔ ticket mapping stable even when we resume after a
+  // partial failure.
   //
   const ticketsToInsert = Array.from(
     { length: missingTickets },
     (_, index) => {
-      const attendeeIndex = existingTickets.length + index;
+      const slotIndex = existingTickets.length + index;
+      const slot = slots[slotIndex];
 
-      const attendee = attendees[attendeeIndex];
+      const attendee = attendees[slotIndex];
 
-      // ------------------------------------------
-      // Individual attendee details
-      // ------------------------------------------
-      //
-      // Use the attendee information supplied for
-      // this specific ticket.
-      //
-      // Fall back to the payer if no attendee
-      // information is available.
-      //
+      // Fall back to the payer if no attendee info
       const attendeeName =
         typeof attendee?.name === "string" && attendee.name.trim()
           ? attendee.name.trim()
@@ -282,48 +295,49 @@ export const generateTicketsForBooking = async (
           : ownerPhone;
 
       console.log(
-        `🎟️ Preparing ticket ${attendeeIndex + 1}/${quantity} for booking ${bookingId} → ${attendeeEmail}`
+        `🎟️ Preparing ticket ${slotIndex + 1}/${totalNeeded} for booking ${bookingId}` +
+          (slot?.ticketTypeName ? ` [${slot.ticketTypeName}]` : "") +
+          ` → ${attendeeEmail}`
       );
 
       return {
         bookingId: booking.bookingId,
         eventId: booking.eventId!,
 
+        // 🆕 the cart line and its ticket type travel with the ticket
+        bookingItemId: slot?.bookingItemId ?? null,
+        ticketTypeId: slot?.ticketTypeId ?? null,
+        ticketTypeName: slot?.ticketTypeName ?? null,
+
         // Original purchaser
         purchaserDigitalId: booking.digitalId ?? null,
 
-        // Current holder
-        // Initially this is the payer.
+        // Current holder — initially the payer
         digitalId: booking.digitalId ?? null,
 
-        // Every ticket gets its own unique token.
-        // This token should be what the QR code represents.
+        // Every ticket gets its own unique token and number
         ticketToken: `TKT-${crypto
           .randomBytes(16)
           .toString("hex")
           .toUpperCase()}`,
 
-        // Every ticket gets its own ticket number.
         ticketNumber: `TNUM-${crypto
           .randomBytes(6)
           .toString("hex")
           .toUpperCase()}`,
 
-        // All tickets purchased together share
-        // the same bundle ID.
+        // All tickets purchased together share the same bundle ID
         groupBundleId,
 
-        // Initially the payer owns all tickets.
+        // Initially the payer owns all tickets
         isAssigned: true,
 
-        // ------------------------------------------
         // Individual attendee details
-        // ------------------------------------------
         attendeeName,
         attendeeEmail,
         attendeePhone,
 
-        // Nobody has been assigned/transferred yet.
+        // Nobody has been assigned/transferred yet
         transferStatus: "unassigned",
       };
     }
@@ -348,47 +362,32 @@ export const generateTicketsForBooking = async (
   // ------------------------------------------
   // 9. Get the COMPLETE ticket set
   // ------------------------------------------
-  //
-  // This is important.
-  //
-  // If we created 3 missing tickets and 2
-  // already existed, the email service should
-  // receive all 5 tickets.
-  //
   const allTickets = await db
     .select()
     .from(tickets)
     .where(eq(tickets.bookingId, bookingId));
 
   console.log(
-    `🎟️ Booking ${bookingId} now has ${allTickets.length}/${quantity} ticket(s).`
+    `🎟️ Booking ${bookingId} now has ${allTickets.length}/${totalNeeded} ticket(s).`
   );
 
   // ------------------------------------------
   // 10. Safety check
   // ------------------------------------------
-  if (allTickets.length < quantity) {
+  if (allTickets.length < totalNeeded) {
     console.error(
       `⚠️ Ticket generation incomplete for booking ${bookingId}. ` +
-        `Expected ${quantity}, found ${allTickets.length}.`
+        `Expected ${totalNeeded}, found ${allTickets.length}.`
     );
 
     throw new Error(
-      `Ticket generation incomplete. Expected ${quantity} tickets but found ${allTickets.length}.`
+      `Ticket generation incomplete. Expected ${totalNeeded} tickets but found ${allTickets.length}.`
     );
   }
 
   // ------------------------------------------
   // 11. Email ALL tickets
   // ------------------------------------------
-  //
-  // processAndEmailTicketService should retrieve
-  // all tickets belonging to this booking.
-  //
-  // Ticket 1 -> attendee 1 email
-  // Ticket 2 -> attendee 2 email
-  // Ticket 3 -> attendee 3 email
-  //
   try {
     console.log(
       `📨 Triggering ticket email for booking ID: ${bookingId}`
@@ -400,8 +399,6 @@ export const generateTicketsForBooking = async (
       `✅ Ticket email dispatched for booking ID: ${bookingId}`
     );
   } catch (emailError: any) {
-    // Ticket creation should NOT be rolled back
-    // just because email delivery failed.
     console.error(
       `❌ Failed to send ticket email for booking ID ${bookingId}:`,
       emailError?.message || emailError
@@ -490,17 +487,6 @@ export const getTicketsByPurchaserId = async (
 
 // ==========================================
 // 8. ASSIGN TICKET TO AN ATTENDEE
-// ------------------------------------------
-// NEW: emails the ticket link to the attendee.
-// - An email is sent when the attendee's email is new or changed
-//   (fixing only a name/phone does not re-send).
-// - When the attendee changes, the ticket token is rotated so the
-//   previous person's link and QR code stop working.
-// - Assigning an attendee is NOT a transfer, so transferStatus is
-//   left alone (it used to be set to "pending_claim", which made
-//   every assigned ticket look like a pending transfer).
-// - Pass the logged-in user's digitalId as `actorDigitalId`.
-// - UPDATED: refunded tickets can't be assigned.
 // ==========================================
 
 type AttendeeInput = { name: string; email: string; phone?: string };
@@ -528,7 +514,6 @@ const applyAssignment = async (
       attendeeEmail: email,
       attendeePhone: phone,
       isAssigned: true,
-      // New person = new link. The old person's link and QR stop working.
       ...(emailChanged ? { ticketToken: generateTicketToken() } : {}),
       updatedAt: new Date(),
     })
@@ -569,10 +554,6 @@ export const assignTicket = async (
 
 // ==========================================
 // 9. BULK ASSIGN BUNDLE TICKETS
-// ------------------------------------------
-// Accepts either { name, email, phone } or the frontend's
-// { attendeeName, attendeeEmail, attendeePhone }.
-// Each newly assigned attendee gets their own email.
 // ==========================================
 export const bulkAssignBundleTickets = async (
   groupBundleId: string,
@@ -620,7 +601,6 @@ export const bulkAssignBundleTickets = async (
     if (shouldEmail) toEmail.push(updated.ticketId);
   }
 
-  // Send the emails after every assignment has been saved
   if (toEmail.length > 0) {
     const fromName = await getDisplayName(actorDigitalId);
     for (const id of toEmail) {
@@ -678,16 +658,6 @@ export const initiateTicketTransfer = async (
 
 // ==========================================
 // 11. CLAIM TRANSFERRED TICKET
-// ------------------------------------------
-// NEW:
-// - The new holder is emailed their ticket with the view link.
-// - The ticket token is rotated, so the previous holder's old
-//   link and QR code stop working.
-// - The claim is a single atomic update: two people using the same
-//   code at the same time can't both win.
-// - Scanned tickets and claiming your own ticket are refused.
-// - UPDATED: refunded tickets can't be claimed.
-// - `newHolderDigitalId` must come from the verified login token.
 // ==========================================
 export const claimTransferredTicket = async (
   claimToken: string,
@@ -729,14 +699,12 @@ export const claimTransferredTicket = async (
       attendeePhone: attendeeInfo.phone ?? null,
       isAssigned: true,
       transferStatus: "transferred",
-      // New owner = new link. The previous holder's link and QR stop working.
       ticketToken: generateTicketToken(),
       claimToken: null,
       claimTokenExpiresAt: null,
       claimedAt: new Date(),
       updatedAt: new Date(),
     })
-    // Matching on the claim token and status again makes this atomic
     .where(
       and(
         eq(tickets.ticketId, ticket.ticketId),
@@ -750,7 +718,6 @@ export const claimTransferredTicket = async (
     throw new Error("This claim code has already been used or the ticket is no longer valid 🚫");
   }
 
-  // Email the new holder their ticket and link
   const fromName = await getDisplayName(previousHolderId);
   await notifyTicketAttendee(claimedTicket.ticketId, "transferred", fromName);
 
@@ -759,12 +726,6 @@ export const claimTransferredTicket = async (
 
 // ==========================================
 // 12. SCAN TICKET AT GATE
-// ------------------------------------------
-// UPDATED:
-// - Refunded (non-Valid) tickets are refused at the gate.
-// - The check-in is atomic: it only succeeds if the ticket is
-//   still Valid and not yet scanned, so a scan and a refund
-//   approval can never both win.
 // ==========================================
 export const scanTicket = async (
   ticketToken: string
@@ -806,7 +767,6 @@ export const scanTicket = async (
     };
   }
 
-  // Atomic: only succeeds if still Valid and not yet scanned
   const [scannedTicket] = await db
     .update(tickets)
     .set({
@@ -839,10 +799,6 @@ export const scanTicket = async (
 
 // ==========================================
 // 13. UNASSIGN TICKET
-// ------------------------------------------
-// NEW: only the current holder can unassign, and unassigning also
-// cancels any pending transfer (the claim code stops working).
-// UPDATED: refunded tickets can't be unassigned.
 // ==========================================
 export const unassignTicket = async (
   ticketId: number,
@@ -923,7 +879,6 @@ export const countScannedAttendees = async (
 
 // ==========================================
 // 17. UPDATE TICKET HOLDER
-// UPDATED: refunded tickets can't change holder.
 // ==========================================
 export const updateTicketHolder = async (
   ticketId: number,
@@ -951,7 +906,6 @@ export const updateTicketHolder = async (
 
 // ==========================================
 // 18. RESET TICKET SCAN
-// UPDATED: a refunded ticket can't be un-scanned.
 // ==========================================
 export const resetTicketScan = async (
   ticketId: number
@@ -991,7 +945,6 @@ export const deleteTicket = async (ticketId: number): Promise<boolean> => {
 
 // ==========================================
 // 20. GET UNASSIGNED USER TICKETS
-// UPDATED: refunded tickets are not listed as tickets to assign.
 // ==========================================
 export const getUnassignedUserTickets = async (
   digitalId: number

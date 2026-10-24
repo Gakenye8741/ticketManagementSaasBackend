@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 import {
   // Event Controllers — unchanged
@@ -158,7 +157,19 @@ eventRouter.get(
 );
 
 // 20. Create a new ticket booking / checkout
-// Supports logged-in users and guests
+// Supports logged-in users and guests.
+//
+// Accepts BOTH payloads on the SAME route (no route signature change needed,
+// the controller branches internally):
+//
+//   • Single-ticket (legacy):
+//       { eventId, ticketTypeId, quantity, guestName?, guestEmail?, guestPhone? }
+//
+//   • Multi-ticket cart:
+//       { eventId, lines: [{ ticketTypeId, quantity }, ...], guestName?, guestEmail?, guestPhone? }
+//
+// If the caller is authenticated, the controller overrides `digitalId`
+// with the authenticated user's id — no client-supplied digitalId is trusted.
 eventRouter.post(
   "/bookings",
   optionalAuth,

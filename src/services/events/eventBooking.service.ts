@@ -3,6 +3,7 @@ import db from "../../drizzle/db";
 import {
   events,
   bookings,
+  bookingItems,
   TInsertEvent,
   TSelectEvent,
   TSelectBooking,
@@ -127,16 +128,13 @@ export const createEventService = async (
     };
   }
 
-  // 1. Fetch the verification record linked to this organization, 
-  // ensuring we pull in the user relation to check their digitalId
   const verificationRecord = await db.query.organizerVerifications.findFirst({
     where: eq(organizerVerifications.orgId, orgId),
     with: {
-      user: true, // This brings in the user details including their digitalId
+      user: true,
     },
   });
 
-  // 2. Check if the verification record exists, is approved, and has a valid user digitalId
   if (!verificationRecord || verificationRecord.status !== "approved" || !verificationRecord.user?.digitalId) {
     return { 
       success: false, 
@@ -144,11 +142,9 @@ export const createEventService = async (
     };
   }
 
-  // Optional: You can explicitly log or verify the digitalId here if needed
   const organizerDigitalId = verificationRecord.user.digitalId;
   console.log(`Verified organizer digital ID: ${organizerDigitalId} posting event...`);
 
-  // 3. If everything checks out, proceed with creating the event
   const [newEvent] = await db.insert(events).values(eventData).returning();
   
   return { 
@@ -209,11 +205,9 @@ export const getEventBySlug = async (slug: string) => {
   }
 };
 
-
 // ==========================================
 // PART 2: BOOKINGS SERVICES (12 - 20)
 // ==========================================
-
 
 // How long an UNPAID booking reserves tickets (without deducting them)
 const HOLD_MINUTES = 15;
@@ -227,6 +221,7 @@ export const getAllBookingsService = async (): Promise<TSelectBooking[]> => {
       event: true,
       payments: true,
       tickets: true,
+      items: true,
     },
   });
 };
@@ -242,10 +237,10 @@ export const getBookingByIdService = async (
       event: true,
       payments: true,
       tickets: true,
+      items: true,
     },
   });
 };
-
 
 /* ==========================================
  * 14. 👤 Get bookings by User (digitalId)
@@ -265,10 +260,10 @@ export const getBookingsByUserIdService = async (
       },
       payments: true,
       tickets: true,
+      items: true,
     },
   });
 };
-
 
 // 15. 🎟️ Get bookings by Event ID
 export const getBookingsByEventIdService = async (
@@ -280,6 +275,7 @@ export const getBookingsByEventIdService = async (
     with: {
       user: true,
       payments: true,
+      items: true,
     },
   });
 };
@@ -292,6 +288,7 @@ export const getRecentBookingsService = async (limitNum: number = 10): Promise<T
     with: {
       user: true,
       event: true,
+      items: true,
     },
   });
 };
@@ -303,11 +300,22 @@ export interface BookingAttendee {
   phone?: string | null;
 }
 
+// NEW — one row of the cart (one ticket type + how many of it)
+export interface BookingLine {
+  ticketTypeId: number;
+  quantity: number;
+}
+
 export interface CreateBookingPayload {
   eventId: number;
-  ticketTypeId: number;
+
+  // NEW — multi-ticket-type cart. If provided, `ticketTypeId`/`quantity` are ignored.
+  lines?: BookingLine[];
+
+  // Legacy single-type fields (still supported if `lines` is not provided)
+  ticketTypeId?: number;
   ticketTypeName?: string;
-  quantity: number;
+  quantity?: number;
 
   // Logged-in user / payer
   digitalId?: number;
@@ -324,131 +332,192 @@ export interface CreateBookingPayload {
   idempotencyKey?: string;
 }
 
-// 🔒 Tickets held by unpaid bookings that are still inside the hold window
+// 🔒 Tickets held by unpaid bookings that are still inside the hold window.
+// Uses relations (no joins). Sums BOTH legacy `bookings.quantity`
+// and new `bookingItems.quantity`.
 const getReservedCount = async (ticketTypeId: number): Promise<number> => {
   const since = new Date(Date.now() - HOLD_MINUTES * 60 * 1000);
-  const [row] = await db
-    .select({ reserved: sql<number>`COALESCE(SUM(${bookings.quantity}), 0)` })
-    .from(bookings)
-    .where(
-      and(
-        eq(bookings.ticketTypeId, ticketTypeId),
-        eq(bookings.bookingStatus, "Pending"),
-        gte(bookings.createdAt, since)
-      )
-    );
-  return Number(row?.reserved ?? 0);
+
+  // Legacy single-type bookings
+  const legacyBookings = await db.query.bookings.findMany({
+    where: and(
+      eq(bookings.ticketTypeId, ticketTypeId),
+      eq(bookings.bookingStatus, "Pending"),
+      gte(bookings.createdAt, since)
+    ),
+    columns: { quantity: true },
+  });
+
+  const legacyReserved = legacyBookings.reduce(
+    (sum, b) => sum + Number(b.quantity ?? 0),
+    0
+  );
+
+  // New multi-type bookings — query items WITH their booking relation
+  const pendingItems = await db.query.bookingItems.findMany({
+    where: eq(bookingItems.ticketTypeId, ticketTypeId),
+    with: {
+      booking: {
+        columns: {
+          bookingId: true,
+          bookingStatus: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  const itemsReserved = pendingItems.reduce((sum, item) => {
+    const b = item.booking;
+    if (!b) return sum;
+    if (b.bookingStatus !== "Pending") return sum;
+    if (new Date(b.createdAt) < since) return sum;
+    return sum + Number(item.quantity ?? 0);
+  }, 0);
+
+  return legacyReserved + itemsReserved;
 };
 
 export const createBookingService = async (payload: CreateBookingPayload) => {
-  if (!Number.isInteger(payload.quantity) || payload.quantity < 1) {
-    return {
-      success: false,
-      message: "Quantity must be a whole number of at least 1",
-    };
+  // ---- 1. Normalize the cart ----
+  // `lines` wins if provided; otherwise fall back to the legacy single-type fields.
+  const rawLines: BookingLine[] =
+    payload.lines && payload.lines.length > 0
+      ? payload.lines
+      : payload.ticketTypeId != null && payload.quantity != null
+        ? [{ ticketTypeId: payload.ticketTypeId, quantity: payload.quantity }]
+        : [];
+
+  if (rawLines.length === 0) {
+    return { success: false, message: "No tickets selected for this booking" };
   }
 
-  // 1. Fetch ticket type and make sure it belongs to the event
-  const [ticketTier] = await db
+  // Validate quantities
+  for (const line of rawLines) {
+    if (!Number.isInteger(line.quantity) || line.quantity < 1) {
+      return {
+        success: false,
+        message: "Quantity must be a whole number of at least 1",
+      };
+    }
+  }
+
+  // Merge duplicate ticketTypeIds (e.g. Comrade added twice)
+  const merged = new Map<number, number>();
+  for (const line of rawLines) {
+    merged.set(line.ticketTypeId, (merged.get(line.ticketTypeId) ?? 0) + line.quantity);
+  }
+  const lines: BookingLine[] = [...merged.entries()].map(
+    ([ticketTypeId, quantity]) => ({ ticketTypeId, quantity })
+  );
+
+  // ---- 2. Load and validate every ticket type ----
+  const ticketTypeIds = lines.map((l) => l.ticketTypeId);
+  const tiers = await db
     .select()
     .from(ticketTypes)
     .where(
       and(
-        eq(ticketTypes.ticketTypeId, payload.ticketTypeId),
+        inArray(ticketTypes.ticketTypeId, ticketTypeIds),
         eq(ticketTypes.eventId, payload.eventId)
       )
     );
 
-  if (!ticketTier) {
-    return {
-      success: false,
-      message: `Ticket type ID '${payload.ticketTypeId}' was not found for this event 🚫`,
-    };
+  const tierById = new Map(tiers.map((t) => [t.ticketTypeId, t]));
+
+  for (const line of lines) {
+    if (!tierById.has(line.ticketTypeId)) {
+      return {
+        success: false,
+        message: `Ticket type ID '${line.ticketTypeId}' was not found for this event 🚫`,
+      };
+    }
   }
 
-  // 2. Remaining = total - already PAID (sold) - held by other unpaid bookings
-  const reserved = await getReservedCount(ticketTier.ticketTypeId);
+  // ---- 3. Stock check for each line ----
+  for (const line of lines) {
+    const tier = tierById.get(line.ticketTypeId)!;
+    const reserved = await getReservedCount(tier.ticketTypeId);
+    const remainingStock = tier.quantity - (tier.sold ?? 0) - reserved;
 
-  const remainingStock =
-    ticketTier.quantity - (ticketTier.sold ?? 0) - reserved;
-
-  if (remainingStock < payload.quantity) {
-    return {
-      success: false,
-      message: `Insufficient tickets available. Remaining stock: ${Math.max(
-        remainingStock,
-        0
-      )}`,
-    };
+    if (remainingStock < line.quantity) {
+      return {
+        success: false,
+        message: `Insufficient tickets available for "${tier.name}". Remaining stock: ${Math.max(remainingStock, 0)}`,
+      };
+    }
   }
 
-  // 3. Total is always calculated on the server
-  const calculatedTotal = (
-    Number(ticketTier.price) * payload.quantity
-  ).toFixed(2);
+  // ---- 4. Compute totals ----
+  const itemsToInsert = lines.map((line) => {
+    const tier = tierById.get(line.ticketTypeId)!;
+    const unitPrice = Number(tier.price);
+    const lineTotal = Number((unitPrice * line.quantity).toFixed(2));
+    return {
+      ticketTypeId: tier.ticketTypeId,
+      ticketTypeName: tier.name,
+      unitPrice: unitPrice.toFixed(2),
+      quantity: line.quantity,
+      lineTotal: lineTotal.toFixed(2),
+    };
+  });
 
-  // 4. Save attendee details with the booking
-  //
-  // Example:
-  // [
-  //   {
-  //     name: "Gakenye Ndiritu",
-  //     email: "gakenye@gmail.com",
-  //     phone: "0712345678"
-  //   },
-  //   {
-  //     name: "Brian Kimurgor",
-  //     email: "brian@gmail.com",
-  //     phone: "0723456789"
-  //   }
-  // ]
-  //
-  // If no attendee details are provided, attendees will be null
-  // and ticket generation will fall back to the payer details.
+  const calculatedTotal = itemsToInsert
+    .reduce((sum, item) => sum + Number(item.lineTotal), 0)
+    .toFixed(2);
 
+  const totalQuantity = itemsToInsert.reduce((sum, item) => sum + item.quantity, 0);
+
+  // ---- 5. Attendees ----
   const attendees =
     payload.attendees && payload.attendees.length > 0
       ? payload.attendees
       : null;
 
-  // 5. Insert the booking as Pending
-  const [newBooking] = await db
-    .insert(bookings)
-    .values({
-      eventId: payload.eventId,
-      ticketTypeId: ticketTier.ticketTypeId,
-      ticketTypeName: ticketTier.name,
-      quantity: payload.quantity,
-      totalAmount: calculatedTotal,
+  // ---- 6. Insert header + items in a single transaction ----
+  const newBooking = await db.transaction(async (tx) => {
+    const [header] = await tx
+      .insert(bookings)
+      .values({
+        eventId: payload.eventId,
+        // Legacy columns point to the first line so old code keeps working
+        ticketTypeId: itemsToInsert[0].ticketTypeId,
+        ticketTypeName: itemsToInsert[0].ticketTypeName,
+        quantity: totalQuantity,
+        isBundle: itemsToInsert.length > 1,
+        totalAmount: calculatedTotal,
 
-      // Payer / primary customer
-      digitalId: payload.digitalId ?? null,
-      guestName: payload.guestName ?? null,
-      guestEmail: payload.guestEmail ?? null,
-      guestPhone: payload.guestPhone ?? null,
+        digitalId: payload.digitalId ?? null,
+        guestName: payload.guestName ?? null,
+        guestEmail: payload.guestEmail ?? null,
+        guestPhone: payload.guestPhone ?? null,
 
-      // Individual attendees
-      attendees,
+        attendees,
 
-      bookingStatus: "Pending",
-      idempotencyKey: payload.idempotencyKey ?? null,
-    })
-    .returning();
+        bookingStatus: "Pending",
+        idempotencyKey: payload.idempotencyKey ?? null,
+      })
+      .returning();
 
-  // ❌ REMOVED: the "sold" update.
-  // Stock is only deducted once payment completes.
+    await tx.insert(bookingItems).values(
+      itemsToInsert.map((item) => ({ ...item, bookingId: header.bookingId }))
+    );
+
+    return header;
+  });
 
   return {
     success: true,
     data: newBooking,
+    items: itemsToInsert,
   };
 };
 
 // ✅ Called when a payment completes. Safe to call more than once.
-// Deducts stock, marks the booking Confirmed, generates ALL tickets, emails them to the payer.
+// Deducts stock for EACH ticket line, marks the booking Confirmed,
+// generates ALL tickets, and emails them to the payer.
 export const confirmBookingAfterPayment = async (bookingId: number) => {
   const { alreadyConfirmed } = await db.transaction(async (tx) => {
-    // Lock the row so two callbacks can't both deduct stock
     const [booking] = await tx
       .select()
       .from(bookings)
@@ -458,15 +527,36 @@ export const confirmBookingAfterPayment = async (bookingId: number) => {
     if (!booking) throw new Error(`Booking ${bookingId} not found 🔍`);
     if (booking.bookingStatus === "Confirmed") return { alreadyConfirmed: true };
 
-    const [tier] = await tx
-      .update(ticketTypes)
-      .set({ sold: sql`COALESCE(${ticketTypes.sold}, 0) + ${booking.quantity}` })
-      .where(eq(ticketTypes.ticketTypeId, booking.ticketTypeId!))
-      .returning();
+    // Prefer items; fall back to legacy single line
+    const items = await tx
+      .select()
+      .from(bookingItems)
+      .where(eq(bookingItems.bookingId, bookingId));
 
-    // The customer already paid, so we honour it, but flag it for you
-    if (tier && (tier.sold ?? 0) > tier.quantity) {
-      console.warn(`⚠️ Ticket type ${tier.ticketTypeId} oversold after booking ${bookingId}`);
+    const lines =
+      items.length > 0
+        ? items.map((i) => ({ ticketTypeId: i.ticketTypeId, quantity: i.quantity }))
+        : booking.ticketTypeId != null
+          ? [{ ticketTypeId: booking.ticketTypeId, quantity: booking.quantity }]
+          : [];
+
+    if (lines.length === 0) {
+      throw new Error(`Booking ${bookingId} has no ticket lines 🔍`);
+    }
+
+    // Deduct stock per line
+    for (const line of lines) {
+      const [tier] = await tx
+        .update(ticketTypes)
+        .set({ sold: sql`COALESCE(${ticketTypes.sold}, 0) + ${line.quantity}` })
+        .where(eq(ticketTypes.ticketTypeId, line.ticketTypeId))
+        .returning();
+
+      if (tier && (tier.sold ?? 0) > tier.quantity) {
+        console.warn(
+          `⚠️ Ticket type ${tier.ticketTypeId} oversold after booking ${bookingId}`
+        );
+      }
     }
 
     await tx
@@ -477,7 +567,6 @@ export const confirmBookingAfterPayment = async (bookingId: number) => {
     return { alreadyConfirmed: false };
   });
 
-  // Generates the tickets and emails them (outside the transaction)
   if (!alreadyConfirmed) await generateTicketsForBooking(bookingId);
   return { alreadyConfirmed };
 };
@@ -485,11 +574,37 @@ export const confirmBookingAfterPayment = async (bookingId: number) => {
 // 🔙 Gives tickets back if a PAID booking is cancelled or refunded
 const releaseStockIfConfirmed = async (bookingId: number, previousStatus: string) => {
   if (previousStatus !== "Confirmed") return;
-  const [booking] = await db.select().from(bookings).where(eq(bookings.bookingId, bookingId));
+
+  const items = await db
+    .select()
+    .from(bookingItems)
+    .where(eq(bookingItems.bookingId, bookingId));
+
+  if (items.length > 0) {
+    for (const item of items) {
+      await db
+        .update(ticketTypes)
+        .set({
+          sold: sql`GREATEST(COALESCE(${ticketTypes.sold}, 0) - ${item.quantity}, 0)`,
+        })
+        .where(eq(ticketTypes.ticketTypeId, item.ticketTypeId));
+    }
+    return;
+  }
+
+  // Legacy fallback
+  const [booking] = await db
+    .select()
+    .from(bookings)
+    .where(eq(bookings.bookingId, bookingId));
+
   if (!booking?.ticketTypeId) return;
+
   await db
     .update(ticketTypes)
-    .set({ sold: sql`GREATEST(COALESCE(${ticketTypes.sold}, 0) - ${booking.quantity}, 0)` })
+    .set({
+      sold: sql`GREATEST(COALESCE(${ticketTypes.sold}, 0) - ${booking.quantity}, 0)`,
+    })
     .where(eq(ticketTypes.ticketTypeId, booking.ticketTypeId));
 };
 
@@ -502,7 +617,7 @@ export const updateBookingStatusService = async (
   if (!existing) throw new Error(`Booking with ID ${bookingId} not found 🔍`);
 
   if (bookingStatus === "Confirmed") {
-    await confirmBookingAfterPayment(bookingId); // deducts stock + makes tickets + emails
+    await confirmBookingAfterPayment(bookingId);
   } else {
     await db
       .update(bookings)

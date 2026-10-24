@@ -1,4 +1,7 @@
-import {  RequestHandler } from "express";
+import { RequestHandler } from "express";
+import { eq } from "drizzle-orm";
+import db from "../../drizzle/db";
+import { bookings } from "../../drizzle/schema";
 import { 
   createPaymentSchema, 
   updatePaymentSchema, 
@@ -236,7 +239,8 @@ export const createPayment: RequestHandler = async (req, res): Promise<void> => 
 
     // Calls your updated service which automatically:
     //  - fetches the organization's custom commissionPercentage and calculates platformFee & netAmount
-    //  - 🆕 reads the admin-configured buyer service fee and saves serviceFee, serviceFeePercent & totalCharged
+    //  - reads the buyer service fee
+    //  - PREFERS the serviceFee/totalCharged already saved on the booking (set by getCheckoutTotals)
     const newPayment = await createPaymentService(payload as any);
     
     res.status(201).json({
@@ -247,13 +251,11 @@ export const createPayment: RequestHandler = async (req, res): Promise<void> => 
   } catch (error: any) {
     console.error("[CREATE_PAYMENT_ERROR]", error);
 
-    // Handle missing bookings or organizations cleanly with a 404
     if (error.message && (error.message.includes("not found") || error.message.includes("could not be found"))) {
       res.status(404).json({ success: false, error: error.message });
       return;
     }
 
-    // Fallback for general server errors
     res.status(500).json({ success: false, error: error.message || "Failed to create payment" });
   }
 };
@@ -275,7 +277,6 @@ export const updatePayment: RequestHandler = async (req, res): Promise<void> => 
       return;
     }
 
-    // 🆕 read through `any` so this compiles even if the validator doesn't list the new fields yet
     const data: any = parseResult.data;
 
     const updatePayload = {
@@ -283,8 +284,8 @@ export const updatePayment: RequestHandler = async (req, res): Promise<void> => 
       amount: data.amount !== undefined ? String(data.amount) : undefined,
       platformFee: data.platformFee !== undefined ? String(data.platformFee) : undefined,
       netAmount: data.netAmount !== undefined ? String(data.netAmount) : undefined,
-      serviceFee: data.serviceFee !== undefined ? String(data.serviceFee) : undefined, // 🆕
-      totalCharged: data.totalCharged !== undefined ? String(data.totalCharged) : undefined, // 🆕
+      serviceFee: data.serviceFee !== undefined ? String(data.serviceFee) : undefined,
+      totalCharged: data.totalCharged !== undefined ? String(data.totalCharged) : undefined,
     };
 
     const updatedPayment = await updatePaymentService(paymentId, updatePayload as any);
@@ -384,7 +385,6 @@ export const getEventTotalRevenue: RequestHandler = async (req, res): Promise<vo
 
 // ==========================================
 // 14. GET PLATFORM TOTAL EARNINGS
-//     (organizer commission only, unchanged)
 // ==========================================
 export const getPlatformTotalEarnings: RequestHandler = async (req, res): Promise<void> => {
   try {
@@ -420,8 +420,10 @@ export const getSuccessfulPaymentsCount: RequestHandler = async (req, res): Prom
 
 // ==========================================
 // 🆕 16. GET CHECKOUT TOTALS (ticket + service fee) FOR A BOOKING
-//     Show this to the buyer before they pay. The ticket amount is read
-//     from the booking in the DB, never from the client.
+//     Reads the booking's totalAmount from the DB, calculates the fee,
+//     AND saves the result back onto the booking so the webhook can use
+//     the exact same numbers. This is the single source of truth for
+//     what the buyer will be charged.
 //     GET /payments/checkout-totals?bookingId=12&method=mpesa
 // ==========================================
 export const getCheckoutTotals: RequestHandler = async (req, res): Promise<void> => {
@@ -435,9 +437,21 @@ export const getCheckoutTotals: RequestHandler = async (req, res): Promise<void>
     const method = typeof req.query.method === "string" ? req.query.method : undefined;
     const totals = await getCheckoutTotalsByBookingService(bookingId, method);
 
+    // Freeze the totals on the booking so the later webhook / verify path
+    // uses the exact fee and total the buyer saw. createPaymentService
+    // prefers these saved values over recomputing.
+    await db
+      .update(bookings)
+      .set({
+        serviceFee: totals.serviceFee,
+        totalCharged: totals.totalCharged,
+        updatedAt: new Date(),
+      })
+      .where(eq(bookings.bookingId, bookingId));
+
     res.status(200).json({
       success: true,
-      message: "Payment: Checkout totals calculated successfully 🧾💳",
+      message: "Payment: Checkout totals calculated and saved on the booking 🧾💳",
       data: totals,
     });
   } catch (error: any) {
@@ -454,7 +468,6 @@ export const getCheckoutTotals: RequestHandler = async (req, res): Promise<void>
 
 // ==========================================
 // 🆕 17. GET SERVICE FEE SETTINGS (admin)
-//     GET /payments/settings/service-fee
 // ==========================================
 export const getServiceFeeSettings: RequestHandler = async (req, res): Promise<void> => {
   try {
@@ -472,15 +485,12 @@ export const getServiceFeeSettings: RequestHandler = async (req, res): Promise<v
 
 // ==========================================
 // 🆕 18. UPDATE SERVICE FEE SETTINGS (admin)
-//     PUT /payments/settings/service-fee   body: { "percent": 3, "flat": 0 }
-//     Takes effect on the next payment, with no code change or redeploy.
 // ==========================================
 export const updateServiceFeeSettings: RequestHandler = async (req, res): Promise<void> => {
   try {
     const percent = Number(req.body?.percent);
     const flat = req.body?.flat === undefined ? 0 : Number(req.body.flat);
 
-    // 50% cap protects against typos like 250 instead of 2.5. Change it if you need to.
     if (!Number.isFinite(percent) || percent < 0 || percent > 50) {
       res.status(400).json({ success: false, error: "Payment: Percentage must be a number between 0 and 50 🚫" });
       return;
@@ -505,7 +515,7 @@ export const updateServiceFeeSettings: RequestHandler = async (req, res): Promis
 };
 
 // ==========================================
-// 🆕 19. GET PLATFORM SERVICE-FEE EARNINGS (buyer fees only)
+// 🆕 19. GET PLATFORM SERVICE-FEE EARNINGS
 // ==========================================
 export const getPlatformServiceFeeEarnings: RequestHandler = async (req, res): Promise<void> => {
   try {
@@ -539,10 +549,7 @@ export const getPlatformTotalRevenue: RequestHandler = async (req, res): Promise
 };
 
 // ==========================================
-// 🆕 21. SERVICE FEE PREVIEW (public, for the event page BEFORE a booking exists)
-//     GET /payments/service-fee-preview?amount=1000&method=mpesa
-//     Display only. The amount actually charged is always recalculated on the
-//     server from the booking in the database.
+// 🆕 21. SERVICE FEE PREVIEW (public, display-only)
 // ==========================================
 export const getServiceFeePreview: RequestHandler = async (req, res): Promise<void> => {
   try {

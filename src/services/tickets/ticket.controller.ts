@@ -32,6 +32,53 @@ import {
 } from "../../validators/Ticket.validator";
 
 // ==========================================
+// NEW: SMALL HELPERS
+// ==========================================
+
+/**
+ * The logged-in user's digitalId, taken from the verified login token.
+ * IMPORTANT: this reads `req.user.digitalId`. If your auth middleware stores
+ * the id somewhere else (e.g. req.user.id or res.locals.user), change ONLY this line.
+ * The id is never read from req.body, so nobody can act as another user.
+ */
+const requireActorId = (req: Request, res: Response): number | null => {
+  const id = Number((req as any).user?.digitalId);
+  if (!id || Number.isNaN(id)) {
+    res.status(401).json({ success: false, message: "Please log in to continue 🔐" });
+    return null;
+  }
+  return id;
+};
+
+/**
+ * Turns the service's known errors into proper status codes so the app
+ * shows the real message (e.g. "This ticket has been refunded...") instead of
+ * a generic "Something went wrong". Anything unknown goes to your error middleware.
+ */
+const handleTicketError = (error: any, res: Response, next: NextFunction) => {
+  const msg: string = error?.message ?? "";
+
+  if (msg.includes("Unauthorized")) {
+    return res.status(403).json({ success: false, message: msg });
+  }
+  if (msg.includes("not found")) {
+    return res.status(404).json({ success: false, message: msg });
+  }
+  // Refunded / no longer valid / already scanned / already used
+  if (
+    msg.includes("refunded") ||
+    msg.includes("no longer valid") ||
+    msg.includes("can't be changed") ||
+    msg.includes("can't be transferred") ||
+    msg.includes("can't be claimed") ||
+    msg.includes("already been used")
+  ) {
+    return res.status(409).json({ success: false, message: msg });
+  }
+  return next(error);
+};
+
+// ==========================================
 // 1. GENERATE TICKETS FOR BOOKING CONTROLLER
 // ==========================================
 export const generateTicketsForBookingController = async (req: Request, res: Response, next: NextFunction) => {
@@ -72,6 +119,7 @@ export const getTicketByIdController = async (req: Request, res: Response, next:
 };
 // ==========================================
 // 3. GET TICKET BY TOKEN CONTROLLER
+// (refunded tickets are still returned so the app can show a "Refunded" state)
 // ==========================================
 export const getTicketByTokenController = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -88,8 +136,6 @@ export const getTicketByTokenController = async (req: Request, res: Response, ne
     next(error);
   }
 };
-
-
 
 // ==========================================
 // 4. GET TICKETS BY BOOKING ID CONTROLLER
@@ -152,20 +198,20 @@ export const getTicketsByPurchaserIdController = async (req: Request, res: Respo
 // ==========================================
 export const assignTicketController = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const actorId = requireActorId(req, res);
+    if (actorId === null) return;
+
     const ticketId = Number(req.params.id);
     const validatedBody = assignTicketSchema.parse(req.body);
 
-    const data = await assignTicket(ticketId, validatedBody);
+    const data = await assignTicket(ticketId, validatedBody, actorId);
     return res.status(200).json({
       success: true,
       message: "Ticket assigned successfully ✅",
       data,
     });
   } catch (error: any) {
-    if (error.message && error.message.includes("Ticket not found")) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
@@ -174,9 +220,16 @@ export const assignTicketController = async (req: Request, res: Response, next: 
 // ==========================================
 export const bulkAssignBundleTicketsController = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const actorId = requireActorId(req, res);
+    if (actorId === null) return;
+
     const validatedBody = bulkAssignBundleTicketsSchema.parse(req.body);
 
-    const data = await bulkAssignBundleTickets(validatedBody.groupBundleId, validatedBody.assignments);
+    const data = await bulkAssignBundleTickets(
+      validatedBody.groupBundleId,
+      validatedBody.assignments,
+      actorId
+    );
     return res.status(200).json({
       success: true,
       message: "Bundle tickets assigned successfully 📦✅",
@@ -184,7 +237,7 @@ export const bulkAssignBundleTicketsController = async (req: Request, res: Respo
       data,
     });
   } catch (error: any) {
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
@@ -193,22 +246,19 @@ export const bulkAssignBundleTicketsController = async (req: Request, res: Respo
 // ==========================================
 export const initiateTicketTransferController = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const actorId = requireActorId(req, res);
+    if (actorId === null) return;
+
     const validatedBody = initiateTicketTransferSchema.parse(req.body);
 
-    const result = await initiateTicketTransfer(validatedBody.ticketId, validatedBody.holderId);
+    const result = await initiateTicketTransfer(validatedBody.ticketId, actorId);
     return res.status(200).json({
       success: true,
       message: "Ticket transfer initiated successfully 🔄",
       data: result,
     });
   } catch (error: any) {
-    if (error.message && error.message.includes("Unauthorized")) {
-      return res.status(403).json({ success: false, message: error.message });
-    }
-    if (error.message && error.message.includes("Ticket not found")) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
@@ -217,11 +267,14 @@ export const initiateTicketTransferController = async (req: Request, res: Respon
 // ==========================================
 export const claimTransferredTicketController = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const actorId = requireActorId(req, res);
+    if (actorId === null) return;
+
     const validatedBody = claimTransferredTicketSchema.parse(req.body);
 
     const data = await claimTransferredTicket(
       validatedBody.claimToken,
-      validatedBody.newHolderDigitalId,
+      actorId,
       validatedBody.attendeeInfo
     );
 
@@ -231,15 +284,19 @@ export const claimTransferredTicketController = async (req: Request, res: Respon
       data,
     });
   } catch (error: any) {
-    if (error.message && (error.message.includes("Invalid") || error.message.includes("expired"))) {
-      return res.status(400).json({ success: false, message: error.message });
+    const msg: string = error?.message ?? "";
+    if (msg.includes("Invalid") || msg.includes("expired")) {
+      return res.status(400).json({ success: false, message: msg });
     }
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
 // ==========================================
 // 12. SCAN TICKET CONTROLLER
+// The service returns the full ticket row (including ticketTypeId and
+// ticketTypeName from the previous schema fix), so the scanner UI already
+// receives the ticket type without any controller change.
 // ==========================================
 export const scanTicketController = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -261,23 +318,20 @@ export const scanTicketController = async (req: Request, res: Response, next: Ne
 // ==========================================
 export const unassignTicketController = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const ticketId = Number(req.params.id);
-    const validatedBody = unassignTicketSchema.parse(req.body);
+    const actorId = requireActorId(req, res);
+    if (actorId === null) return;
 
-    const data = await unassignTicket(ticketId, validatedBody.ownerId);
+    const ticketId = Number(req.params.id);
+    unassignTicketSchema.parse(req.body);
+
+    const data = await unassignTicket(ticketId, actorId);
     return res.status(200).json({
       success: true,
       message: "Ticket unassigned successfully ↩️",
       data,
     });
   } catch (error: any) {
-    if (error.message && error.message.includes("Unauthorized")) {
-      return res.status(403).json({ success: false, message: error.message });
-    }
-    if (error.message && error.message.includes("Ticket not found")) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
@@ -326,6 +380,7 @@ export const countScannedAttendeesController = async (req: Request, res: Respons
 
 // ==========================================
 // 17. UPDATE TICKET HOLDER CONTROLLER
+// NOTE: this should be admin-only in your routes.
 // ==========================================
 export const updateTicketHolderController = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -338,12 +393,13 @@ export const updateTicketHolderController = async (req: Request, res: Response, 
       data,
     });
   } catch (error: any) {
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
 // ==========================================
 // 18. RESET TICKET SCAN CONTROLLER
+// NOTE: this should be admin-only in your routes.
 // ==========================================
 export const resetTicketScanController = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -356,12 +412,13 @@ export const resetTicketScanController = async (req: Request, res: Response, nex
       data,
     });
   } catch (error: any) {
-    next(error);
+    handleTicketError(error, res, next);
   }
 };
 
 // ==========================================
 // 19. DELETE TICKET CONTROLLER
+// NOTE: this should be admin-only in your routes.
 // ==========================================
 export const deleteTicketController = async (req: Request, res: Response, next: NextFunction) => {
   try {

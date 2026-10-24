@@ -184,7 +184,6 @@ export const createEvent: RequestHandler = async (req, res) => {
       return;
     }
 
-    // Helper function to generate a URL-friendly slug from the title
     const generateSlug = (title: string): string => {
       return title
         .toLowerCase()
@@ -197,17 +196,15 @@ export const createEvent: RequestHandler = async (req, res) => {
     const baseSlug = generateSlug(parseResult.data.title);
     const uniqueSlug = `${baseSlug}-${Date.now().toString().slice(-4)}`;
 
-    // Attach slug and fallback values if your service still requires ticketPrice and ticketsTotal
     const eventPayload = {
       ...parseResult.data,
       slug: uniqueSlug,
-      ticketPrice: "0.00", // Default fallback if required by service/DB
-      ticketsTotal: 0,     // Default fallback if required by service/DB
+      ticketPrice: "0.00",
+      ticketsTotal: 0,
     };
 
     const result = await createEventService(eventPayload);
 
-    // Check if the service denied event creation due to verification failure
     if (!result.success) {
       res.status(403).json({ success: false, message: result.message });
       return;
@@ -289,14 +286,10 @@ export const deleteEvent: RequestHandler = async (req, res) => {
 import { eq } from "drizzle-orm";
 import { events } from "../../drizzle/schema";
 import db from "../../drizzle/db";
-;
-
 
 export const getEventBySlugController: RequestHandler = async (req, res) => {
   try {
     const rawSlug = req.params.slug;
-    
-    // Ensure slug is a valid single string
     const slug = Array.isArray(rawSlug) ? rawSlug[0] : rawSlug;
 
     if (!slug || typeof slug !== "string") {
@@ -321,7 +314,6 @@ export const getEventBySlugController: RequestHandler = async (req, res) => {
     res.status(500).json({ success: false, error: error.message || "Failed to fetch event" });
   }
 };
-
 
 // ==========================================================
 // 🎫 BOOKING CONTROLLERS (12 - 20)
@@ -370,8 +362,6 @@ export const getBookingById: RequestHandler = async (req, res) => {
       return;
     }
 
-    // Users can only access their own bookings.
-    // This assumes booking.digitalId stores the authenticated user's userId.
     if (
       req.user?.role === "user" &&
       Number(booking.digitalId) !== Number(req.user.userId)
@@ -415,8 +405,6 @@ export const getBookingsByUserId: RequestHandler = async (req, res) => {
       return;
     }
 
-    // Prevent a regular user from fetching another user's bookings.
-    // This assumes digitalId corresponds to req.user.userId.
     if (
       req.user?.role === "user" &&
       requestedDigitalId !== Number(req.user.userId)
@@ -445,8 +433,6 @@ export const getBookingsByUserId: RequestHandler = async (req, res) => {
   }
 };
 
-// Get the authenticated user's bookings
-// Register /bookings/me before /bookings/:id in your routes.
 export const getMyBookings: RequestHandler = async (req, res) => {
   try {
     if (!req.user?.userId) {
@@ -549,7 +535,7 @@ export const getRecentBookings: RequestHandler = async (req, res) => {
 };
 
 // ==========================================
-// 17. CREATE BOOKING CONTROLLER
+// 17. CREATE BOOKING CONTROLLER — NOW SUPPORTS MULTI-TICKET CART
 // ==========================================
 export const createBooking: RequestHandler = async (req, res) => {
   try {
@@ -577,17 +563,41 @@ export const createBooking: RequestHandler = async (req, res) => {
     const resolvedDigitalId =
       req.user?.userId ?? data.digitalId ?? undefined;
 
-    const payload = {
+    // ----- NEW: build `lines` (multi-ticket) or fall back to single-ticket -----
+    const lines =
+      Array.isArray(data.lines) && data.lines.length > 0
+        ? data.lines.map((line) => ({
+            ticketTypeId: line.ticketTypeId,
+            quantity: line.quantity,
+          }))
+        : data.ticketTypeId != null && data.quantity != null
+          ? [{ ticketTypeId: data.ticketTypeId, quantity: data.quantity }]
+          : [];
+
+    if (lines.length === 0) {
+      res.status(400).json({
+        success: false,
+        error:
+          "Please select at least one ticket type and quantity 🎟️",
+      });
+      return;
+    }
+
+    const payload: CreateBookingPayload = {
       eventId: data.eventId,
-      ticketTypeId: data.ticketTypeId,
-      quantity: data.quantity,
+
+      // NEW — multi-ticket cart
+      lines,
+
+      // Legacy fields kept so older code paths still read them
+      ticketTypeId: lines[0].ticketTypeId,
+      quantity: lines.reduce((sum, l) => sum + l.quantity, 0),
 
       digitalId:
         resolvedDigitalId !== null && resolvedDigitalId !== undefined
           ? resolvedDigitalId
           : undefined,
 
-      // Payer / primary attendee
       guestName:
         data.guestName ??
         req.user?.fullName ??
@@ -602,7 +612,6 @@ export const createBooking: RequestHandler = async (req, res) => {
         data.guestPhone ??
         undefined,
 
-      // Individual attendees for each ticket
       attendees: data.attendees ?? undefined,
 
       idempotencyKey:
@@ -619,8 +628,9 @@ export const createBooking: RequestHandler = async (req, res) => {
     res.status(201).json({
       success: true,
       message:
-        "Booking initialized successfully using Ticket ID! Ready for payment processing 💳🎫",
+        "Booking initialized successfully with all selected tickets! Ready for payment processing 💳🎫",
       data: result.data,
+      items: result.items,
     });
   } catch (error: any) {
     console.error("[CREATE_BOOKING_ERROR]", error);

@@ -64,6 +64,20 @@
       "when": 1792812368320,
       "tag": "0008_wild_steve_rogers",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792853369653,
+      "tag": "0009_confused_archangel",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792856285456,
+      "tag": "0010_lean_pet_avengers",
+      "breakpoints": true
     }
   ]
 }

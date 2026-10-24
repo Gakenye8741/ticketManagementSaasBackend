@@ -79,11 +79,22 @@ export const updateEventStatusValidator = z.object({
     }),
 });
 
-
-
 /* ==========================================
  * 🎫 BOOKING VALIDATORS
  * ========================================== */
+
+// NEW — one row of the cart
+export const bookingLineValidator = z.object({
+  ticketTypeId: z
+    .number({ required_error: "Ticket Type ID is required" })
+    .int("Ticket Type ID must be an integer")
+    .positive("Ticket Type ID must be greater than zero"),
+
+  quantity: z
+    .number({ required_error: "Quantity is required" })
+    .int("Quantity must be a whole number")
+    .min(1, "Quantity must be at least 1"),
+});
 
 export const createBookingValidator = z
   .object({
@@ -92,15 +103,27 @@ export const createBookingValidator = z
       .int("Event ID must be an integer")
       .positive("Event ID must be greater than zero"),
 
+    // NEW — multi-ticket-type cart
+    lines: z
+      .array(bookingLineValidator)
+      .min(1, "At least one ticket line is required")
+      .optional()
+      .nullable(),
+
+    // Legacy single-type fields (still accepted when `lines` is missing)
     ticketTypeId: z
-      .number({ required_error: "Ticket Type ID is required" })
+      .number()
       .int("Ticket Type ID must be an integer")
-      .positive("Ticket Type ID must be greater than zero"),
+      .positive("Ticket Type ID must be greater than zero")
+      .optional()
+      .nullable(),
 
     quantity: z
-      .number({ required_error: "Quantity is required" })
+      .number()
       .int("Quantity must be a whole number")
-      .min(1, "Quantity must be at least 1"),
+      .min(1, "Quantity must be at least 1")
+      .optional()
+      .nullable(),
 
     digitalId: z
       .number()
@@ -172,6 +195,25 @@ export const createBookingValidator = z
       .optional()
       .nullable(),
   })
+  // Must supply either `lines` OR (`ticketTypeId` + `quantity`)
+  .refine(
+    (data) => {
+      const hasLines = Array.isArray(data.lines) && data.lines.length > 0;
+      const hasLegacy =
+        data.ticketTypeId !== undefined &&
+        data.ticketTypeId !== null &&
+        data.quantity !== undefined &&
+        data.quantity !== null;
+
+      return hasLines || hasLegacy;
+    },
+    {
+      message:
+        "Provide either a `lines` array (multi-ticket) or both `ticketTypeId` and `quantity` (single ticket) 🎟️",
+      path: ["lines"],
+    }
+  )
+  // Guest details are only required when not logged in
   .refine(
     (data) => {
       const hasDigitalId =
@@ -217,6 +259,8 @@ export type TUpdateEventStatus = z.infer<
 export type TCreateBooking = z.infer<
   typeof createBookingValidator
 >;
+
+export type TBookingLine = z.infer<typeof bookingLineValidator>;
 
 export type TUpdateBookingStatus = z.infer<
   typeof updateBookingStatusValidator

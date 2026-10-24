@@ -3,6 +3,7 @@ import db from "../../drizzle/db";
 import {
   payments,
   bookings,
+  bookingItems,
   wallets,
   organizations,
   platformSettings,
@@ -180,7 +181,6 @@ export const getPaymentsByDateRangeService = async (
 
 // ==========================================
 // ORGANIZER COMMISSION CALCULATOR
-// Splits the TICKET amount using the organization's own commission percentage.
 // ==========================================
 export const calculatePaymentFees = (
   amount: number | string,
@@ -189,9 +189,7 @@ export const calculatePaymentFees = (
   const totalAmount = Number(amount);
   const commissionRate = Number(commissionPercentage);
 
-  const platformFee = Number(
-    (totalAmount * (commissionRate / 100)).toFixed(2)
-  );
+  const platformFee = Number((totalAmount * (commissionRate / 100)).toFixed(2));
   const netAmount = Number((totalAmount - platformFee).toFixed(2));
 
   return {
@@ -202,13 +200,12 @@ export const calculatePaymentFees = (
 };
 
 // ==========================================
-// WALLET HELPERS (used by create + status update)
+// WALLET HELPERS
 // ==========================================
-const DEFAULT_COMMISSION = 5; // % fallback if the organization has none set
+const DEFAULT_COMMISSION = 5;
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-/** Splits the amount using the organization's own commission percentage */
 const resolveFees = async (tx: Tx, orgId: number, amount: number) => {
   const [org] = await tx
     .select({ commission: organizations.commissionPercentage })
@@ -219,7 +216,6 @@ const resolveFees = async (tx: Tx, orgId: number, amount: number) => {
   return calculatePaymentFees(amount, rate);
 };
 
-/** Credits the organizer's wallet with the NET amount (after the platform fee) */
 const creditWalletFromPayment = async (
   tx: Tx,
   payment: { orgId: number | null; netAmount: string | null }
@@ -242,7 +238,6 @@ const creditWalletFromPayment = async (
     });
   }
 
-  // Atomic increment: safe even if two payments land at the same moment
   await tx
     .update(wallets)
     .set({
@@ -255,13 +250,8 @@ const creditWalletFromPayment = async (
 
 // ==========================================
 // BUYER SERVICE FEE (admin-configurable via platform_settings)
-// ------------------------------------------
-// The service fee is ALWAYS worked out from the BASE TICKET PRICE
-// (the booking's ticket total), never from what the buyer paid.
-// It is charged to the buyer ON TOP of the ticket amount, for platform maintenance.
-// The admin changes the rate from the settings page; no code change needed.
 // ==========================================
-const DEFAULT_SERVICE_FEE_PERCENT = 2.5; // fallback if platform_settings has no value yet
+const DEFAULT_SERVICE_FEE_PERCENT = 2.5;
 
 export const getBuyerFeeConfig = async (executor: typeof db | Tx = db) => {
   const d = executor as typeof db;
@@ -286,11 +276,6 @@ export const getBuyerFeeConfig = async (executor: typeof db | Tx = db) => {
 
 const isMpesa = (method?: string | null) => /m-?pesa/i.test(String(method ?? ""));
 
-/**
- * Service fee + total for a BASE TICKET PRICE.
- * Works in cents to avoid floating-point errors.
- * M-Pesa STK push needs a whole-shilling total, so for M-Pesa the fee is rounded up to make it whole.
- */
 export const calcBuyerFee = (
   ticketAmount: number | string,
   cfg: { percent: number; flat: number },
@@ -314,10 +299,6 @@ export const calcBuyerFee = (
   };
 };
 
-/**
- * Call this where you START the payment (M-Pesa STK push / Stripe PaymentIntent)
- * so the buyer is charged `totalCharged` instead of only the ticket amount.
- */
 export const getCheckoutTotalsService = async (
   ticketAmount: number | string,
   paymentMethod?: string | null
@@ -330,11 +311,6 @@ export const getCheckoutTotalsService = async (
   };
 };
 
-/**
- * Used when STARTING a Paystack payment. Always rounds to whole shillings
- * (M-Pesa requires it), and the result is saved on the booking so the
- * same numbers are used at checkout, verification, and settlement.
- */
 export const computeBookingCharge = async (ticketAmount: number | string) => {
   const t = await getCheckoutTotalsService(ticketAmount, "mpesa");
   return {
@@ -351,14 +327,12 @@ export const createPaymentService = async (input: any) => {
   let alreadyRecorded = false;
 
   const newPayment = await db.transaction(async (tx) => {
-    // Serialize concurrent callers (webhook + status polling) for this booking
     await tx
       .select({ id: bookings.bookingId })
       .from(bookings)
       .where(eq(bookings.bookingId, input.bookingId))
       .for("update");
 
-    // Already recorded for this reference? Return it, don't insert again
     if (input.checkoutRequestId) {
       const [duplicate] = await tx
         .select()
@@ -373,7 +347,7 @@ export const createPaymentService = async (input: any) => {
 
     const bookingRecord = await tx.query.bookings.findFirst({
       where: eq(bookings.bookingId, input.bookingId),
-      with: { event: true },
+      with: { event: true, items: true },
     });
 
     if (!bookingRecord) {
@@ -382,9 +356,6 @@ export const createPaymentService = async (input: any) => {
 
     let paymentAmount = Number(input.amount ?? bookingRecord.totalAmount);
 
-    // Safety: the commission AND the service fee are calculated on the BASE TICKET price only.
-    // If a caller passes the amount the buyer actually paid (tickets + service fee),
-    // cap it at the booking's ticket total so the fee is never counted as ticket revenue.
     const bookingTotal = Number(bookingRecord.totalAmount);
     if (
       Number.isFinite(bookingTotal) &&
@@ -395,7 +366,6 @@ export const createPaymentService = async (input: any) => {
     }
 
     const organizationId = input.orgId ?? bookingRecord.event?.orgId;
-
     if (!organizationId) {
       throw new Error(
         `Associated organization could not be found for booking ${input.bookingId} 🚫`
@@ -408,13 +378,20 @@ export const createPaymentService = async (input: any) => {
       paymentAmount
     );
 
-    // Buyer service fee, worked out from the base ticket price (`amount`)
+    // If the booking already had serviceFee / totalCharged saved at checkout start,
+    // prefer those (they were frozen at checkout). Otherwise recompute now.
+    const savedBookingFee = Number(bookingRecord.serviceFee ?? 0);
+    const savedBookingTotal = Number(bookingRecord.totalCharged ?? 0);
+    const hasSavedBookingFee =
+      Number.isFinite(savedBookingFee) &&
+      Number.isFinite(savedBookingTotal) &&
+      savedBookingTotal > 0;
+
+    // Recompute as a fallback (e.g. Stripe legacy, or booking was created before checkout)
     const feeCfg = await getBuyerFeeConfig(tx);
     const computed = calcBuyerFee(amount, feeCfg, isMpesa(input.paymentMethod));
 
-    // Prefer what the buyer was actually charged at checkout (passed in by the Paystack handler),
-    // but only when BOTH numbers are valid. Otherwise recompute from the base ticket price
-    // (e.g. Stripe or older flows that don't pass them).
+    // Caller-provided values are also accepted, but last in priority
     const chargedFee = Number(input.serviceFee);
     const chargedTotal = Number(input.totalCharged);
     const hasChargedFee =
@@ -424,16 +401,27 @@ export const createPaymentService = async (input: any) => {
       Number.isFinite(chargedTotal) &&
       chargedTotal > 0;
 
-    const serviceFee = hasChargedFee ? chargedFee.toFixed(2) : computed.serviceFee;
-    const totalCharged = hasChargedFee
-      ? chargedTotal.toFixed(2)
-      : computed.totalCharged;
-    const serviceFeePercent =
-      input.serviceFeePercent ?? String(feeCfg.percent);
+    let serviceFee: string;
+    let totalCharged: string;
 
-    // Heads-up only (nothing is changed): the fee actually charged differs from the fee
-    // the current settings would give for this ticket price, e.g. the admin changed the rate mid-checkout.
-    if (hasChargedFee && Math.abs(chargedFee - Number(computed.serviceFee)) > 1) {
+    if (hasSavedBookingFee) {
+      serviceFee = savedBookingFee.toFixed(2);
+      totalCharged = savedBookingTotal.toFixed(2);
+    } else if (hasChargedFee) {
+      serviceFee = chargedFee.toFixed(2);
+      totalCharged = chargedTotal.toFixed(2);
+    } else {
+      serviceFee = computed.serviceFee;
+      totalCharged = computed.totalCharged;
+    }
+
+    // Always store the rate the admin has set for the percent that was actually used.
+    const serviceFeePercent = String(feeCfg.percent);
+
+    if (
+      hasSavedBookingFee &&
+      Math.abs(savedBookingFee - Number(computed.serviceFee)) > 1
+    ) {
       console.warn(
         `⚠️ Service fee charged (${serviceFee}) differs from the fee calculated on the ticket price ` +
           `(${computed.serviceFee}) for booking ${bookingRecord.bookingId}.`
@@ -450,8 +438,8 @@ export const createPaymentService = async (input: any) => {
         platformFee,
         netAmount,
         serviceFee,
-        serviceFeePercent, // rate used at purchase time
-        totalCharged, // what the buyer paid (amount + serviceFee)
+        serviceFeePercent,
+        totalCharged,
         paymentMethod: input.paymentMethod,
         paymentStatus: input.paymentStatus ?? "Completed",
         transactionId: input.transactionId,
@@ -462,7 +450,7 @@ export const createPaymentService = async (input: any) => {
       .returning();
 
     if (created.paymentStatus === "Completed") {
-      await creditWalletFromPayment(tx, created); // credits netAmount only
+      await creditWalletFromPayment(tx, created);
     }
 
     return created;
@@ -504,8 +492,6 @@ export const updatePaymentService = async (
 
 // ==========================================
 // 15. UPDATE PAYMENT STATUS & TRANSACTION ID
-//     M-Pesa and Stripe both go through here.
-//     Credits the wallet on the FIRST move to Completed.
 // ==========================================
 export const updatePaymentStatusService = async (
   paymentId: number,
@@ -515,7 +501,6 @@ export const updatePaymentStatusService = async (
   resultDesc?: string
 ): Promise<TSelectPayment> => {
   const { updatedPayment, firstCompletion } = await db.transaction(async (tx) => {
-    // Lock the row so duplicate callbacks can't double-credit the wallet
     const [previous] = await tx
       .select()
       .from(payments)
@@ -539,7 +524,6 @@ export const updatePaymentStatusService = async (
     const first =
       status === "Completed" && previous.paymentStatus !== "Completed";
 
-    // Credit the organizer's wallet with the net amount (after platform fee)
     if (first) {
       await creditWalletFromPayment(tx, updated);
     }
@@ -547,12 +531,10 @@ export const updatePaymentStatusService = async (
     return { updatedPayment: updated, firstCompletion: first };
   });
 
-  // Only on the FIRST move to Completed: deduct stock, make tickets, email them
   if (firstCompletion && updatedPayment.bookingId) {
     try {
       await confirmBookingAfterPayment(updatedPayment.bookingId);
     } catch (err) {
-      // Payment is saved. An admin can still set the booking to "Confirmed" to retry.
       console.error(
         `❌ Post-payment fulfilment failed for booking ${updatedPayment.bookingId}:`,
         err
@@ -683,7 +665,7 @@ export const getPlatformServiceFeeEarningsService = async (): Promise<number> =>
 };
 
 // ==========================================
-// 23. TOTAL PLATFORM REVENUE (organizer commission + buyer service fees)
+// 23. TOTAL PLATFORM REVENUE
 // ==========================================
 export const getPlatformTotalRevenueService = async (): Promise<number> => {
   const result = await db
@@ -700,8 +682,9 @@ export const getPlatformTotalRevenueService = async (): Promise<number> => {
 };
 
 // ==========================================
-// 24. CHECKOUT TOTALS FOR A BOOKING (ticket + service fee, calculated server-side)
-//     The base ticket price comes from the booking in the DB, never from the client.
+// 24. CHECKOUT TOTALS FOR A BOOKING
+//     Uses the booking's items (multi-ticket) or falls back to the legacy
+//     single-ticket columns — either way the ticket total is correct.
 // ==========================================
 export const getCheckoutTotalsByBookingService = async (
   bookingId: number,
@@ -709,21 +692,24 @@ export const getCheckoutTotalsByBookingService = async (
 ) => {
   const booking = await db.query.bookings.findFirst({
     where: eq(bookings.bookingId, bookingId),
+    with: { items: true },
   });
 
   if (!booking) {
     throw new Error(`Booking with ID ${bookingId} not found 🚫`);
   }
 
+  // Use the stored totalAmount — it already sums every line of the cart
+  // (createBookingService computes it from the bookingItems).
   const totals = await getCheckoutTotalsService(
     booking.totalAmount,
     paymentMethod
   );
-  return { bookingId, ...totals };
+  return { bookingId, ...totals, items: booking.items ?? [] };
 };
 
 // ==========================================
-// 25. SERVICE FEE SETTINGS (admin can view and change without touching code)
+// 25. SERVICE FEE SETTINGS
 // ==========================================
 export const getServiceFeeSettingsService = async () => {
   return await getBuyerFeeConfig();

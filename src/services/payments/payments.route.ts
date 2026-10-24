@@ -76,22 +76,25 @@ paymentRouter.get("/analytics/successful-count", getSuccessfulPaymentsCount);
 
 // ==========================================
 // 📋 CORE PAYMENT CRUD & FILTER ROUTES
+// ⚠️ ALL fixed-path and sub-path routes MUST come BEFORE "/:id".
 // ==========================================
+
+// Fixed-path create & list
 paymentRouter.get("/", getAllPayments);
 paymentRouter.post("/", createPayment);
 
-paymentRouter.get("/:id", getPaymentById);
-paymentRouter.put("/:id", updatePayment);
-paymentRouter.delete("/:id", deletePayment);
-
-paymentRouter.patch("/:id/status", updatePaymentStatus);
-
-// Specialized Filter Routes
+// Specialized filters (declared BEFORE "/:id")
 paymentRouter.get("/booking/:bookingId", getPaymentsByBookingId);
 paymentRouter.get("/event/:eventId", getPaymentsByEventId);
 paymentRouter.get("/org/:orgId", getPaymentsByOrgId);
 paymentRouter.get("/user/:digitalId", getPaymentsByDigitalId);
 paymentRouter.get("/status/:status", getPaymentsByStatus);
 paymentRouter.get("/method/:method", getPaymentsByMethod);
+
+// Dynamic ID routes — LAST, after every fixed-path route above
+paymentRouter.get("/:id", getPaymentById);
+paymentRouter.put("/:id", updatePayment);
+paymentRouter.delete("/:id", deletePayment);
+paymentRouter.patch("/:id/status", updatePaymentStatus);
 
 export default paymentRouter;

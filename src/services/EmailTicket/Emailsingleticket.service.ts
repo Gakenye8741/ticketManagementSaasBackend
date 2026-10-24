@@ -44,12 +44,15 @@ export const emailSingleTicketService = async (
     throw new Error(`Ticket ${ticketId} is missing a ticket token.`);
   }
 
-  // 2. Event details, loaded the same way processAndEmailTicketService does
+  // 2. Event details, loaded the same way processAndEmailTicketService does.
+  //    We also load `items` so a multi-ticket booking can resolve the
+  //    correct ticket type for THIS ticket, not the whole booking.
   const booking = await dbConn.query.bookings.findFirst({
     where: dEq(bkTable.bookingId, ticket.bookingId),
     with: {
       event: { with: { venue: true } },
       ticketType: true,
+      items: true, // 🆕
     },
   });
 
@@ -58,12 +61,41 @@ export const emailSingleTicketService = async (
     throw new Error(`Event details for ticket ${ticketId} could not be loaded.`);
   }
 
+  // 🆕 Resolve the ticket type that belongs to THIS ticket.
+  //    Priority:
+  //      1. ticket.ticketTypeName       (snapshot written when the ticket was generated)
+  //      2. match ticket.bookingItemId  → booking.items[].ticketTypeName
+  //      3. match ticket.ticketTypeId   → booking.items[].ticketTypeName
+  //      4. legacy booking.ticketType.name (single-type / older bookings)
+  //      5. "General"
+  const resolveTicketTypeName = (): string => {
+    if (ticket.ticketTypeName) return ticket.ticketTypeName;
+
+    const items = Array.isArray(booking.items) ? booking.items : [];
+
+    if (ticket.bookingItemId != null) {
+      const match = items.find(
+        (i) => Number(i.bookingItemId) === Number(ticket.bookingItemId)
+      );
+      if (match?.ticketTypeName) return match.ticketTypeName;
+    }
+
+    if (ticket.ticketTypeId != null) {
+      const match = items.find(
+        (i) => Number(i.ticketTypeId) === Number(ticket.ticketTypeId)
+      );
+      if (match?.ticketTypeName) return match.ticketTypeName;
+    }
+
+    return booking.ticketType?.name ?? "General";
+  };
+
   const venue = event.venue;
   const venueName = venue
     ? `${venue.name}, ${venue.address}`
     : event.category || "Laikipia University Grounds";
   const eventDateTime = `${event.date} @ ${event.time}`;
-  const tierName = booking.ticketType?.name ?? "General";
+  const tierName = resolveTicketTypeName(); // 🆕 per-ticket type
 
   // 3. The link the attendee clicks
   const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
@@ -138,7 +170,7 @@ export const emailSingleTicketService = async (
   `;
 
   // 6. Send
-  console.log(`📧 Sending ${reason} ticket ${ticketId} to ${ticket.attendeeEmail}...`);
+  console.log(`📧 Sending ${reason} ticket ${ticketId} (${tierName}) to ${ticket.attendeeEmail}...`);
 
   const sent = await sendEmail(ticket.attendeeEmail, subject, firstName, plainText, htmlContent);
 
@@ -146,7 +178,7 @@ export const emailSingleTicketService = async (
     throw new Error(`Failed to dispatch ${reason} ticket email to ${ticket.attendeeEmail}.`);
   }
 
-  console.log(`✅ ${reason} ticket ${ticketId} emailed to ${ticket.attendeeEmail}.`);
+  console.log(`✅ ${reason} ticket ${ticketId} (${tierName}) emailed to ${ticket.attendeeEmail}.`);
 
   return { ticketId, email: ticket.attendeeEmail, ticketViewUrl };
 };

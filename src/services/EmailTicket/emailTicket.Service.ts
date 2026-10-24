@@ -25,7 +25,12 @@ export const processAndEmailTicketService = async (bookingId: number) => {
         },
       },
 
+      // Legacy single ticket type (still used for old bookings)
       ticketType: true,
+
+      // 🆕 Multi-ticket cart lines — every email uses its own line
+      items: true,
+
       user: true,
       payments: true,
 
@@ -42,6 +47,55 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   const venue = event?.venue;
   const ticketType = bookingRecord.ticketType;
   const user = bookingRecord.user;
+
+  // 🆕 Map from ticketTypeId → ticket type name, so each ticket can be
+  // resolved to its own name in O(1). Built from bookingItems first (the
+  // source of truth for multi-ticket bookings), then topped up from the
+  // legacy booking.ticketType so old bookings still work.
+  const typeNameById = new Map<number, string>();
+  const typeIdByBookingItemId = new Map<number, number>();
+  const typeNameByBookingItemId = new Map<number, string>();
+
+  if (Array.isArray(bookingRecord.items)) {
+    for (const item of bookingRecord.items) {
+      if (item.ticketTypeId != null && item.ticketTypeName) {
+        typeNameById.set(Number(item.ticketTypeId), item.ticketTypeName);
+      }
+      if (item.bookingItemId != null) {
+        if (item.ticketTypeId != null) {
+          typeIdByBookingItemId.set(Number(item.bookingItemId), Number(item.ticketTypeId));
+        }
+        if (item.ticketTypeName) {
+          typeNameByBookingItemId.set(Number(item.bookingItemId), item.ticketTypeName);
+        }
+      }
+    }
+  }
+
+  if (ticketType?.ticketTypeId && ticketType.name && !typeNameById.has(Number(ticketType.ticketTypeId))) {
+    typeNameById.set(Number(ticketType.ticketTypeId), ticketType.name);
+  }
+
+  // 🆕 Per-ticket type resolution — used in the per-attendee loop
+  const resolveTicketTypeName = (ticket: any): string => {
+    // 1. The ticket's own snapshot (set by generateTicketsForBooking)
+    if (ticket?.ticketTypeName) return ticket.ticketTypeName;
+
+    // 2. Match by bookingItemId
+    if (ticket?.bookingItemId != null) {
+      const n = typeNameByBookingItemId.get(Number(ticket.bookingItemId));
+      if (n) return n;
+    }
+
+    // 3. Match by ticketTypeId
+    if (ticket?.ticketTypeId != null) {
+      const n = typeNameById.get(Number(ticket.ticketTypeId));
+      if (n) return n;
+    }
+
+    // 4. Fallback to the legacy booking-level ticket type
+    return ticketType?.name || "General";
+  };
 
   // Get the latest payment record.
   const payment =
@@ -69,9 +123,10 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   // ==========================================
   // 3. Validate required booking information
   // ==========================================
-  if (!event || !ticketType || !bookingEmail) {
+  // The legacy `ticketType` is no longer required — items carry the type now.
+  if (!event || !bookingEmail) {
     throw new Error(
-      "Incomplete booking relations (Event, TicketType, or Guest/User Contact missing)."
+      "Incomplete booking relations (Event or Guest/User Contact missing)."
     );
   }
 
@@ -125,16 +180,6 @@ export const processAndEmailTicketService = async (bookingId: number) => {
   // ==========================================
   // 7. Build ticket information
   // ==========================================
-  //
-  // Every ticket now has its own:
-  //
-  // attendeeName
-  // attendeeEmail
-  // ticketToken
-  // ticketNumber
-  //
-  // Each attendee will receive ONLY their own ticket.
-  //
   const ticketLinks = bookingTickets.map((ticket, index) => {
     if (!ticket.ticketToken) {
       throw new Error(
@@ -153,25 +198,23 @@ export const processAndEmailTicketService = async (bookingId: number) => {
 
   // ==========================================
   // 8. Send individual email to EACH attendee
+  // ------------------------------------------
+  // Build every email first (no await in the loop), then fire them in
+  // parallel with Promise.allSettled so one bad address can't block the
+  // other attendees. This is what fixes sonar S9382.
   // ==========================================
   const emailResults: Array<{
     ticketId: number;
     email: string;
     success: boolean;
     ticketViewUrl: string;
+    error?: string;
   }> = [];
 
-  for (const { ticket, index, ticketViewUrl } of ticketLinks) {
+  const emailJobs = ticketLinks.map(({ ticket, index, ticketViewUrl }) => {
     // ------------------------------------------
     // Resolve attendee email
     // ------------------------------------------
-    //
-    // Prefer the email stored on the individual
-    // ticket.
-    //
-    // If it does not exist, fall back to the
-    // primary booking email.
-    //
     const attendeeEmail =
       (ticket as any).attendeeEmail ||
       bookingEmail;
@@ -183,6 +226,9 @@ export const processAndEmailTicketService = async (bookingId: number) => {
 
     const attendeeFirstName =
       attendeeName.split(" ")[0] || bookingFirstName;
+
+    // 🆕 Each ticket gets its OWN type name
+    const thisTicketTypeName = resolveTicketTypeName(ticket);
 
     // ------------------------------------------
     // Build individual attendee email
@@ -224,6 +270,7 @@ export const processAndEmailTicketService = async (bookingId: number) => {
               "
             >
               ${(ticket as any).ticketNumber || `Ticket ${index}`}
+              · ${thisTicketTypeName}
             </p>
           </div>
 
@@ -250,6 +297,17 @@ export const processAndEmailTicketService = async (bookingId: number) => {
         >
           <strong>Holder:</strong>
           ${attendeeName}
+        </p>
+
+        <p
+          style="
+            font-size: 12px;
+            color: #475569;
+            margin: 8px 0;
+          "
+        >
+          <strong>Ticket type:</strong>
+          ${thisTicketTypeName}
         </p>
 
         <p
@@ -428,7 +486,7 @@ export const processAndEmailTicketService = async (bookingId: number) => {
                 "
               >
                 <strong>🎟️ Ticket Tier:</strong>
-                ${ticketType.name}
+                ${thisTicketTypeName}
               </p>
 
               <p
@@ -529,48 +587,95 @@ export const processAndEmailTicketService = async (bookingId: number) => {
       </div>
     `;
 
-    // ==========================================
-    // Send email to this attendee
-    // ==========================================
-    console.log(
-      `📧 Sending ticket ${index}/${expectedQuantity} ` +
-        `to ${attendeeEmail} for booking ${bookingId}...`
-    );
-
-    const emailSent = await sendEmail(
+    return {
+      index,
+      ticket,
       attendeeEmail,
-      `Your Ticket: ${event.title}`,
       attendeeFirstName,
-      `Your ticket for ${event.title} has been confirmed. Your secure gate-pass link is ready.`,
-      htmlContent
-    );
+      ticketViewUrl,
+      thisTicketTypeName,
+      subject: `Your Ticket: ${event.title}`,
+      plainMessage: `Your ticket for ${event.title} has been confirmed. Your secure gate-pass link is ready.`,
+      htmlContent,
+    };
+  });
 
-    if (!emailSent) {
+  // 🚀 Fire all emails in parallel; never reject so one failure doesn't
+  // cancel the remaining attendees.
+  const settled = await Promise.allSettled(
+    emailJobs.map(async (job) => {
+      console.log(
+        `📧 Sending ticket ${job.index}/${expectedQuantity} ` +
+          `(${job.thisTicketTypeName}) to ${job.attendeeEmail} for booking ${bookingId}...`
+      );
+
+      const ok = await sendEmail(
+        job.attendeeEmail,
+        job.subject,
+        job.attendeeFirstName,
+        job.plainMessage,
+        job.htmlContent
+      );
+
+      return { job, ok };
+    })
+  );
+
+  // Walk the results in the SAME order as emailJobs so logging is stable
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    const job = emailJobs[i];
+
+    if (result.status === "rejected") {
+      const err = result.reason;
       console.error(
-        `❌ Failed to send ticket ${index} email to ${attendeeEmail}`
+        `❌ Ticket ${job.index} email to ${job.attendeeEmail} threw:`,
+        err?.message || err
       );
-
       emailResults.push({
-        ticketId: ticket.ticketId,
-        email: attendeeEmail,
+        ticketId: job.ticket.ticketId,
+        email: job.attendeeEmail,
         success: false,
-        ticketViewUrl,
+        ticketViewUrl: job.ticketViewUrl,
+        error: String(err?.message ?? err),
       });
+      continue;
+    }
 
-      throw new Error(
-        `Failed to dispatch ticket email to ${attendeeEmail} for ticket ${ticket.ticketId}.`
+    const { ok } = result.value;
+
+    if (!ok) {
+      console.error(
+        `❌ Failed to send ticket ${job.index} email to ${job.attendeeEmail}`
       );
+      emailResults.push({
+        ticketId: job.ticket.ticketId,
+        email: job.attendeeEmail,
+        success: false,
+        ticketViewUrl: job.ticketViewUrl,
+      });
+      continue;
     }
 
     emailResults.push({
-      ticketId: ticket.ticketId,
-      email: attendeeEmail,
+      ticketId: job.ticket.ticketId,
+      email: job.attendeeEmail,
       success: true,
-      ticketViewUrl,
+      ticketViewUrl: job.ticketViewUrl,
     });
 
     console.log(
-      `✅ Ticket ${index}/${expectedQuantity} email sent to ${attendeeEmail}.`
+      `✅ Ticket ${job.index}/${expectedQuantity} (${job.thisTicketTypeName}) email sent to ${job.attendeeEmail}.`
+    );
+  }
+
+  // If any email failed, surface a clear error AFTER all sends have been
+  // attempted, so tickets are never rolled back but the caller still knows.
+  const failed = emailResults.filter((r) => !r.success);
+  if (failed.length > 0) {
+    throw new Error(
+      `Failed to dispatch ${failed.length}/${emailResults.length} ticket email(s) for booking ${bookingId}. ` +
+        `Failed addresses: ${failed.map((r) => r.email).join(", ")}.`
     );
   }
 

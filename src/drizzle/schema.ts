@@ -61,15 +61,14 @@ export const notificationTypeEnum = pgEnum("notificationType", [
 ]);
 
 export const verificationStatusEnum = pgEnum("verification_status", [
-  "pending",                 // Newly submitted, waiting in queue
-  "in_progress",             // Admin is actively reviewing
-  "resubmission_requested",  // Specific photos/documents need fixes
-  "approved",                // Fully verified
-  "rejected",                // Failed verification entirely
-  "suspended",               // Revoked due to fraud/suspicious activity
+  "pending",
+  "in_progress",
+  "resubmission_requested",
+  "approved",
+  "rejected",
+  "suspended",
 ]);
 
-// Entity type enum
 export const entityTypeEnum = pgEnum("entity_type", ["individual", "corporate"]);
 
 export const notificationChannelEnum = pgEnum("notificationChannel", ["email", "sms", "whatsapp"]);
@@ -90,7 +89,7 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 255 }).notNull().unique(),
   emailVerified: boolean("emailVerified").notNull().default(false),
   confirmationCode: varchar("confirmationCode", { length: 255 }).default(""),
-  password: varchar("password", { length: 255 }), // nullable for guest-checkout profiles
+  password: varchar("password", { length: 255 }),
   contactPhone: varchar("contactPhone", { length: 20 }).notNull().unique(),
   address: text("address"),
   city: varchar("city", { length: 100 }),
@@ -99,7 +98,6 @@ export const users = pgTable("users", {
   role: roleEnum("role").notNull().default("user"),
   isActive: boolean("isActive").notNull().default(true),
 
-  // Auth & security fields
   passwordResetToken: varchar("passwordResetToken", { length: 255 }),
   passwordResetExpiresAt: timestamp("passwordResetExpiresAt"),
   failedLoginAttempts: integer("failedLoginAttempts").notNull().default(0),
@@ -141,7 +139,6 @@ export const refreshTokens = pgTable("refresh_tokens", {
 export const organizerVerifications = pgTable("organizer_verifications", {
   id: serial("id").primaryKey(),
   
-  // Foreign Keys mapping to your tables
   userId: integer("digitalId")
     .notNull()
     .references(() => users.digitalId, { onDelete: "cascade" }),
@@ -152,26 +149,21 @@ export const organizerVerifications = pgTable("organizer_verifications", {
   entityType: entityTypeEnum("entityType").default("individual").notNull(),
   legalFullName: varchar("legalFullName", { length: 255 }).notNull(),
 
-  // 1. Identity Verification (KYC - Cloudinary URLs)
   idFrontUrl: text("idFrontUrl").notNull(),
   idBackUrl: text("idBackUrl").notNull(),
   selfiePhotos: text("selfiePhotos").array().notNull(),
 
-  // 3. Business Details (Required if entityType is 'corporate')
   businessRegistrationDocUrl: text("businessRegistrationDocUrl"),
   taxComplianceCertUrl: text("taxComplianceCertUrl"),
 
-  // =========================================================================
-  // GRANULAR FIELD-LEVEL FEEDBACK & REJECTION REASONS
-  // =========================================================================
   idFrontRejected: boolean("idFrontRejected").notNull().default(false),
-  idFrontComment: text("idFrontComment"), // e.g. "Blurry, retake with better lighting"
+  idFrontComment: text("idFrontComment"),
 
   idBackRejected: boolean("idBackRejected").notNull().default(false),
-  idBackComment: text("idBackComment"),   // e.g. "Corners cut off, show full ID card"
+  idBackComment: text("idBackComment"),
 
   selfiesRejected: boolean("selfiesRejected").notNull().default(false),
-  selfiesComment: text("selfiesComment"), // e.g. "Live selfie did not match ID face clearly"
+  selfiesComment: text("selfiesComment"),
 
   businessDocRejected: boolean("businessDocRejected").notNull().default(false),
   businessDocComment: text("businessDocComment"),
@@ -179,9 +171,8 @@ export const organizerVerifications = pgTable("organizer_verifications", {
   taxCertRejected: boolean("taxCertRejected").notNull().default(false),
   taxCertComment: text("taxCertComment"),
 
-  // Global Review Status & General Admin Comments
   status: verificationStatusEnum("status").default("pending").notNull(),
-  adminComment: text("adminComment"), // Overall application summary or final rejection reason
+  adminComment: text("adminComment"),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -194,7 +185,7 @@ export const organizerVerifications = pgTable("organizer_verifications", {
 });
 
 // =======================
-// SAAS: ORGANIZATIONS (Multi-Tenancy & Ticket Commissions)
+// SAAS: ORGANIZATIONS
 // =======================
 
 export const organizations = pgTable("organizations", {
@@ -205,15 +196,12 @@ export const organizations = pgTable("organizations", {
   supportPhone: varchar("supportPhone", { length: 20 }),
   logoUrl: text("logoUrl"),
   
-  // Financial Payout Info (For sending net earnings via M-Pesa)
-  payoutPhone: varchar("payoutPhone", { length: 20 }), // M-Pesa number / Till / Paybill for payouts
-  payoutType: varchar("payoutType", { length: 50 }).default("mpesa_phone"), // 'mpesa_phone', 'paybill', 'bank'
+  payoutPhone: varchar("payoutPhone", { length: 20 }),
+  payoutType: varchar("payoutType", { length: 50 }).default("mpesa_phone"),
 
-  // Platform Commission Configuration per Tenant (Pure Commission Model)
-  commissionPercentage: decimal("commissionPercentage", { precision: 5, scale: 2 }).notNull().default("5.00"), // e.g. 5.00% cut per ticket
+  commissionPercentage: decimal("commissionPercentage", { precision: 5, scale: 2 }).notNull().default("5.00"),
   
-  // Status & Verification
-  isVerified: boolean("isVerified").notNull().default(false), // Admin verification badge
+  isVerified: boolean("isVerified").notNull().default(false),
   isActive: boolean("isActive").notNull().default(true),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -297,17 +285,16 @@ export const payouts = pgTable("payouts", {
   transactionReference: varchar("transactionReference", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-  methodId: integer("methodId"),                                  // which saved method was used
-reference: varchar("reference", { length: 100 }).unique(),      // our idempotency key, sent to Paystack
-transferCode: varchar("transferCode", { length: 100 }),         // optional; code currently goes in transactionReference
-failureReason: text("failureReason"),
+  methodId: integer("methodId"),
+  reference: varchar("reference", { length: 100 }).unique(),
+  transferCode: varchar("transferCode", { length: 100 }),
+  failureReason: text("failureReason"),
 }, (table) => {
   return {
     orgIdx: index("payout_org_idx").on(table.orgId),
     walletIdx: index("payout_wallet_idx").on(table.walletId),
   };
 });
-
 
 // =======================
 // SAAS: SAVED PAYOUT METHODS
@@ -321,7 +308,7 @@ export const organizerPayoutMethods = pgTable("organizer_payout_methods", {
   accountType: varchar("accountType", { length: 50 }).notNull(),
   isDefault: boolean("isDefault").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  bankCode: varchar("bankCode", { length: 20 }),                  // needed for bank accounts
+  bankCode: varchar("bankCode", { length: 20 }),
   recipientCode: varchar("recipientCode", { length: 100 })
 }, (table) => {
   return {
@@ -373,6 +360,7 @@ export const events = pgTable("events", {
     categoryIdx: index("event_category_idx").on(table.category),
   };
 });
+
 // =======================
 // TICKET TYPES
 // =======================
@@ -391,6 +379,9 @@ export const ticketTypes = pgTable("ticketTypes", {
   };
 });
 
+// =======================
+// SUPPORT TICKETS
+// =======================
 
 export const ticketStatusEnum = pgEnum("ticket_status", [
   "Open",
@@ -408,37 +399,29 @@ export const priorityEnum = pgEnum("priority", [
 ]);
 
 export const ticketScopeEnum = pgEnum("ticket_scope", [
-  "Organization", // handled by the organization's own team
-  "Platform", // handled by the platform superadmin
+  "Organization",
+  "Platform",
 ]);
-
-// =======================
-// SUPPORT TICKETS
-// =======================
 
 export const supportTickets = pgTable(
   "supportTickets",
   {
     ticketId: serial("ticketId").primaryKey(),
 
-    // Who created it
     digitalId: integer("digitalId")
       .references(() => users.digitalId, { onDelete: "cascade" })
       .notNull(),
 
-    // Which organization it concerns (null for pure platform tickets)
     orgId: integer("orgId").references(() => organizations.orgId, {
       onDelete: "cascade",
     }),
 
     scope: ticketScopeEnum("scope").default("Organization").notNull(),
 
-    // Who is handling it
     assignedTo: integer("assignedTo").references(() => users.digitalId, {
       onDelete: "set null",
     }),
 
-    // Escalation from organization to platform
     escalatedAt: timestamp("escalatedAt"),
     escalatedBy: integer("escalatedBy").references(() => users.digitalId, {
       onDelete: "set null",
@@ -465,7 +448,6 @@ export const supportTickets = pgTable(
       table.scope,
       table.status
     ),
-    // An Organization-scoped ticket must belong to an organization
     scopeOrgCheck: check(
       "support_ticket_scope_org_check",
       sql`${table.scope} = 'Platform' OR ${table.orgId} IS NOT NULL`
@@ -489,7 +471,7 @@ export const responses = pgTable(
       .notNull(),
     message: text("message").notNull(),
     isStaff: boolean("isStaff").default(false).notNull(),
-    isInternal: boolean("isInternal").default(false).notNull(), // hidden from the ticket owner
+    isInternal: boolean("isInternal").default(false).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   (table) => ({
@@ -511,7 +493,6 @@ export const supportTicketsMedia = pgTable(
     ticketId: integer("ticketId")
       .references(() => supportTickets.ticketId, { onDelete: "cascade" })
       .notNull(),
-    // null = attached to the ticket itself, set = attached to a specific reply
     responseId: integer("responseId").references(() => responses.responseId, {
       onDelete: "cascade",
     }),
@@ -519,9 +500,9 @@ export const supportTicketsMedia = pgTable(
       .references(() => users.digitalId, { onDelete: "cascade" })
       .notNull(),
     fileName: varchar("fileName", { length: 255 }).notNull(),
-    fileUrl: text("fileUrl").notNull(), // URL or storage key
+    fileUrl: text("fileUrl").notNull(),
     mimeType: varchar("mimeType", { length: 127 }).notNull(),
-    fileSize: integer("fileSize").notNull(), // bytes
+    fileSize: integer("fileSize").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   (table) => ({
@@ -530,7 +511,6 @@ export const supportTicketsMedia = pgTable(
     sizeCheck: check("ticket_media_size_check", sql`${table.fileSize} > 0`),
   })
 );
-
 
 // =======================
 // SAAS: PROMO CODES & DISCOUNTS
@@ -580,12 +560,10 @@ export const bookings = pgTable("bookings", {
   digitalId: integer("digitalId")
     .references(() => users.digitalId, { onDelete: "set null" }),
 
-  // Payer / primary customer details
   guestName: varchar("guestName", { length: 255 }),
   guestEmail: varchar("guestEmail", { length: 255 }),
   guestPhone: varchar("guestPhone", { length: 20 }),
 
-  // Individual attendee details for each ticket
   attendees: jsonb("attendees"),
 
   eventId: integer("eventId")
@@ -624,19 +602,48 @@ export const bookings = pgTable("bookings", {
   updatedAt: timestamp("updatedAt")
     .defaultNow()
     .notNull(),
-    serviceFee: decimal("serviceFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
-    totalCharged: decimal("totalCharged", { precision: 10, scale: 2 }).notNull().default("0.00"),
+
+  serviceFee: decimal("serviceFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
+
+  totalCharged: decimal("totalCharged", { precision: 10, scale: 2 }).notNull().default("0.00"),
 }, (table) => {
   return {
     userIdx: index("booking_user_idx").on(table.digitalId),
-
     eventIdx: index("booking_event_idx").on(table.eventId),
+    checkoutReqIdx: index("booking_checkout_req_idx").on(table.checkoutRequestId),
+    idempotencyIdx: index("booking_idempotency_idx").on(table.idempotencyKey),
+  };
+});
 
-    checkoutReqIdx: index("booking_checkout_req_idx")
-      .on(table.checkoutRequestId),
+// =======================
+// BOOKING ITEMS
+// One row per ticket type in a booking (multi-ticket-type checkout).
+// =======================
 
-    idempotencyIdx: index("booking_idempotency_idx")
-      .on(table.idempotencyKey),
+export const bookingItems = pgTable("bookingItems", {
+  bookingItemId: serial("bookingItemId").primaryKey(),
+
+  bookingId: integer("bookingId")
+    .references(() => bookings.bookingId, { onDelete: "cascade" })
+    .notNull(),
+
+  ticketTypeId: integer("ticketTypeId")
+    .references(() => ticketTypes.ticketTypeId)
+    .notNull(),
+
+  ticketTypeName: varchar("ticketTypeName", { length: 100 }).notNull(),
+
+  unitPrice: decimal("unitPrice", { precision: 10, scale: 2 }).notNull(),
+
+  quantity: integer("quantity").notNull(),
+
+  lineTotal: decimal("lineTotal", { precision: 10, scale: 2 }).notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => {
+  return {
+    bookingIdx: index("booking_items_booking_idx").on(table.bookingId),
+    ticketTypeIdx: index("booking_items_ticket_type_idx").on(table.ticketTypeId),
   };
 });
 
@@ -649,39 +656,27 @@ export const payments = pgTable("payments", {
   orgId: integer("orgId").references(() => organizations.orgId, { onDelete: "cascade" }),
   bookingId: integer("bookingId").references(() => bookings.bookingId, { onDelete: "cascade" }),
 
-  // Optional digitalId to support frictionless guest checkouts
   digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "set null" }),
 
-  // ---- Money ----
-  // amount          = ticket total (what the organizer's tickets cost)
-  // platformFee     = platform commission taken from the organizer
-  // netAmount       = amount - platformFee (credited to the organizer wallet)
-  // serviceFee      = buyer service fee, paid on top of the tickets (admin-configurable, ~2.5%)
-  // totalCharged    = amount + serviceFee (what the buyer actually pays via M-Pesa/Stripe)
-  // Platform revenue per sale = platformFee + serviceFee
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   platformFee: decimal("platformFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
   netAmount: decimal("netAmount", { precision: 10, scale: 2 }).notNull().default("0.00"),
   serviceFee: decimal("serviceFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
-  serviceFeePercent: decimal("serviceFeePercent", { precision: 5, scale: 2 }), // rate used at purchase time
+  serviceFeePercent: decimal("serviceFeePercent", { precision: 5, scale: 2 }),
   totalCharged: decimal("totalCharged", { precision: 10, scale: 2 }).notNull().default("0.00"),
 
   paymentStatus: paymentStatusEnum("paymentStatus").default("Pending").notNull(),
   paymentDate: timestamp("paymentDate").defaultNow().notNull(),
 
-  // paymentMethod can store "mpesa" or "stripe"
   paymentMethod: varchar("paymentMethod", { length: 100 }),
 
-  // General transaction identifier (e.g., M-Pesa Receipt Number or Stripe Charge ID)
   transactionId: varchar("transactionId", { length: 255 }).unique(),
 
-  // M-Pesa Daraja fields
   checkoutRequestId: varchar("checkoutRequestId", { length: 255 }),
   merchantRequestId: varchar("merchantRequestId", { length: 255 }),
   resultCode: varchar("resultCode", { length: 10 }),
   resultDesc: varchar("resultDesc", { length: 255 }),
 
-  // Stripe specific fields (optional, to easily map webhook events)
   stripePaymentIntentId: varchar("stripePaymentIntentId", { length: 255 }),
   stripeClientSecret: varchar("stripeClientSecret", { length: 255 }),
 
@@ -718,10 +713,9 @@ export const refunds = pgTable("refunds", {
   transactionReference: varchar("transactionReference", { length: 255 }),
   processedAt: timestamp("processedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  // ---- Refund details (added) ----
   orgId: integer("orgId").references(() => organizations.orgId, { onDelete: "set null" }),
   reasonType: refundReasonTypeEnum("reasonType").default("Other").notNull(),
-  ticketIds: jsonb("ticketIds").$type<number[]>(), // null = whole booking
+  ticketIds: jsonb("ticketIds").$type<number[]>(),
   ticketAmount: decimal("ticketAmount", { precision: 10, scale: 2 }).notNull().default("0.00"),
   serviceFeeAmount: decimal("serviceFeeAmount", { precision: 10, scale: 2 }).notNull().default("0.00"),
   failureReason: text("failureReason"),
@@ -739,8 +733,6 @@ export const refunds = pgTable("refunds", {
   };
 });
 
-
-
 // =======================
 // MEDIA (Event-Centric)
 // =======================
@@ -751,8 +743,8 @@ export const media = pgTable("media", {
     .references(() => events.eventId, { onDelete: "cascade" })
     .notNull(),
   url: varchar("url", { length: 500 }).notNull(),
-  type: mediaTypeEnum("type").notNull(), // 'banner', 'gallery', 'poster'
-  isPrimary: boolean("isPrimary").default(false).notNull(), // <-- Great for default cover images
+  type: mediaTypeEnum("type").notNull(),
+  isPrimary: boolean("isPrimary").default(false).notNull(),
   altText: varchar("altText", { length: 255 }),
   uploadedAt: timestamp("uploadedAt").defaultNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -762,22 +754,32 @@ export const media = pgTable("media", {
   };
 });
 
-
-
 // =======================
-// TICKETS (Bundle Grouping & Transfer Lifecycle)
+// TICKETS
 // =======================
 
 export const tickets = pgTable("tickets", {
   ticketId: serial("ticketId").primaryKey(),
-  digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "set null" }), // Current holder
-  purchaserDigitalId: integer("purchaserDigitalId").references(() => users.digitalId, { onDelete: "set null" }), // Original buyer
+  digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "set null" }),
+  purchaserDigitalId: integer("purchaserDigitalId").references(() => users.digitalId, { onDelete: "set null" }),
   bookingId: integer("bookingId").references(() => bookings.bookingId, { onDelete: "cascade" }).notNull(),
+
+  // 🆕 the cart line this ticket was created from (multi-ticket bookings)
+  bookingItemId: integer("bookingItemId").references(() => bookingItems.bookingItemId, {
+    onDelete: "set null",
+  }),
+
+  // 🆕 ticket type captured on the ticket itself, so the type survives
+  // renames / deletions and is available without a join
+  ticketTypeId: integer("ticketTypeId").references(() => ticketTypes.ticketTypeId, {
+    onDelete: "set null",
+  }),
+  ticketTypeName: varchar("ticketTypeName", { length: 100 }),
+
   eventId: integer("eventId").references(() => events.eventId, { onDelete: "cascade" }).notNull(),
   ticketToken: varchar("ticketToken", { length: 255 }).notNull().unique(),
   ticketNumber: varchar("ticketNumber", { length: 50 }),
 
-  // Group bundle allocation
   groupBundleId: varchar("groupBundleId", { length: 100 }),
 
   isAssigned: boolean("isAssigned").default(false).notNull(),
@@ -785,16 +787,13 @@ export const tickets = pgTable("tickets", {
   attendeeEmail: varchar("attendeeEmail", { length: 255 }),
   attendeePhone: varchar("attendeePhone", { length: 20 }),
 
-  // Transfer & claim lifecycle
   transferStatus: transferStatusEnum("transferStatus").default("unassigned").notNull(),
   claimToken: varchar("claimToken", { length: 255 }).unique(),
   claimTokenExpiresAt: timestamp("claimTokenExpiresAt"),
   claimedAt: timestamp("claimedAt"),
 
-  // Gate scanning status
   isScanned: boolean("isScanned").default(false).notNull(),
   scannedAt: timestamp("scannedAt"),
-  // Refund / cancellation lifecycle (added)
   lifecycleStatus: ticketLifecycleStatusEnum("lifecycleStatus").default("Valid").notNull(),
   refundedAt: timestamp("refundedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -808,6 +807,9 @@ export const tickets = pgTable("tickets", {
     eventIdx: index("ticket_event_idx").on(table.eventId),
     attendeeEmailIdx: index("ticket_attendee_email_idx").on(table.attendeeEmail),
     holderIdx: index("ticket_holder_idx").on(table.digitalId),
+    // 🆕 new indexes for the new columns
+    bookingItemIdx: index("ticket_booking_item_idx").on(table.bookingItemId),
+    ticketTypeIdx: index("ticket_type_idx").on(table.ticketTypeId),
   };
 });
 
@@ -891,7 +893,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   refreshTokens: many(refreshTokens),
   refundsInitiated: many(refunds),
   auditLogs: many(auditLogs),
-  verifications: many(organizerVerifications), // Added for user KYC verification records
+  verifications: many(organizerVerifications),
 }));
 
 export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
@@ -900,8 +902,6 @@ export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
     references: [users.digitalId],
   }),
 }));
-
-
 
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   members: many(organizationMembers),
@@ -917,7 +917,7 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   promoCodes: many(promoCodes),
   scannerLogs: many(scannerLogs),
   auditLogs: many(auditLogs),
-  verifications: many(organizerVerifications), // Added for corporate verification records
+  verifications: many(organizerVerifications),
   supportTickets: many(supportTickets),
 }));
 
@@ -1007,11 +1007,12 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   staff: many(eventStaff),
 }));
 
-export const ticketTypesRelations = relations(ticketTypes, ({ one }) => ({
+export const ticketTypesRelations = relations(ticketTypes, ({ one, many }) => ({
   event: one(events, {
     fields: [ticketTypes.eventId],
     references: [events.eventId],
   }),
+  bookingItems: many(bookingItems), // NEW — reverse side of bookingItems.ticketType
 }));
 
 export const promoCodesRelations = relations(promoCodes, ({ one }) => ({
@@ -1041,6 +1042,19 @@ export const bookingsRelations = relations(bookings, ({ one, many }) => ({
   payments: many(payments),
   tickets: many(tickets),
   refunds: many(refunds),
+  items: many(bookingItems), // NEW — multi-ticket-type lines
+}));
+
+// NEW — relations for bookingItems
+export const bookingItemsRelations = relations(bookingItems, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [bookingItems.bookingId],
+    references: [bookings.bookingId],
+  }),
+  ticketType: one(ticketTypes, {
+    fields: [bookingItems.ticketTypeId],
+    references: [ticketTypes.ticketTypeId],
+  }),
 }));
 
 export const paymentsRelations = relations(payments, ({ one, many }) => ({
@@ -1078,12 +1092,6 @@ export const refundsRelations = relations(refunds, ({ one }) => ({
   }),
 }));
 
-
-
-// =======================
-// MEDIA RELATIONS
-// =======================
-
 export const mediaRelations = relations(media, ({ one }) => ({
   event: one(events, {
     fields: [media.eventId],
@@ -1091,28 +1099,19 @@ export const mediaRelations = relations(media, ({ one }) => ({
   }),
 }));
 
-
-
-// =======================
-// SUPPORT TICKETS RELATIONS
-// =======================
-
 export const supportTicketsRelations = relations(
   supportTickets,
   ({ one, many }) => ({
-    // Who created the ticket
     user: one(users, {
       fields: [supportTickets.digitalId],
       references: [users.digitalId],
       relationName: "ticketOwner",
     }),
-    // Who is handling it
     assignee: one(users, {
       fields: [supportTickets.assignedTo],
       references: [users.digitalId],
       relationName: "ticketAssignee",
     }),
-    // Who escalated it to the platform
     escalator: one(users, {
       fields: [supportTickets.escalatedBy],
       references: [users.digitalId],
@@ -1127,10 +1126,6 @@ export const supportTicketsRelations = relations(
   })
 );
 
-// =======================
-// RESPONSES RELATIONS
-// =======================
-
 export const responsesRelations = relations(responses, ({ one, many }) => ({
   ticket: one(supportTickets, {
     fields: [responses.ticketId],
@@ -1142,10 +1137,6 @@ export const responsesRelations = relations(responses, ({ one, many }) => ({
   }),
   media: many(supportTicketsMedia),
 }));
-
-// =======================
-// SUPPORT TICKETS MEDIA RELATIONS
-// =======================
 
 export const supportTicketsMediaRelations = relations(
   supportTicketsMedia,
@@ -1183,6 +1174,17 @@ export const ticketsRelations = relations(tickets, ({ one, many }) => ({
     references: [users.digitalId],
     relationName: "purchaser",
   }),
+
+  // 🆕 new relations
+  bookingItem: one(bookingItems, {
+    fields: [tickets.bookingItemId],
+    references: [bookingItems.bookingItemId],
+  }),
+  ticketType: one(ticketTypes, {
+    fields: [tickets.ticketTypeId],
+    references: [ticketTypes.ticketTypeId],
+  }),
+
   scannerLogs: many(scannerLogs),
   notifications: many(notifications),
 }));
@@ -1270,6 +1272,9 @@ export type TInsertPromoCode = typeof promoCodes.$inferInsert;
 
 export type TSelectBooking = typeof bookings.$inferSelect;
 export type TInsertBooking = typeof bookings.$inferInsert;
+
+export type TSelectBookingItem = typeof bookingItems.$inferSelect;
+export type TInsertBookingItem = typeof bookingItems.$inferInsert;
 
 export type TSelectTicket = typeof tickets.$inferSelect;
 export type TInsertTicket = typeof tickets.$inferInsert;
