@@ -42,11 +42,14 @@ export const eventCategoryEnum = pgEnum("event_category", [
 export const roleEnum = pgEnum("role", ["user", "admin", "organizer"]);
 export const orgRoleEnum = pgEnum("orgRole", ["owner", "admin", "manager","scanner"]);
 export const bookingStatusEnum = pgEnum("bookingStatus", ["Pending", "Confirmed", "Cancelled", "Refunded"]);
-export const paymentStatusEnum = pgEnum("paymentStatus", ["Pending", "Completed", "Failed", "Paid", "Refunded"]);
+export const paymentStatusEnum = pgEnum("paymentStatus", ["Pending", "Completed", "Failed", "Paid", "Refunded", "PartiallyRefunded"]);
+
 export const venueStatusEnum = pgEnum("venueStatus", ["available", "booked"]);
 export const eventStatusEnum = pgEnum("eventStatus", ["in_progress", "ended", "cancelled", "upcoming"]);
 export const mediaTypeEnum = pgEnum("mediaType", ["image", "video"]);
-export const payoutStatusEnum = pgEnum("payoutStatus", ["Pending", "Processing", "Completed", "Failed"]);
+export const payoutStatusEnum = pgEnum("payoutStatus", [
+  "Pending", "Processing", "Completed", "Failed", "Reversed", 
+]);
 export const transferStatusEnum = pgEnum("transferStatus", ["unassigned", "pending_claim", "transferred"]);
 export const notificationTypeEnum = pgEnum("notificationType", [
   "ticket_assigned",
@@ -71,6 +74,10 @@ export const entityTypeEnum = pgEnum("entity_type", ["individual", "corporate"])
 
 export const notificationChannelEnum = pgEnum("notificationChannel", ["email", "sms", "whatsapp"]);
 export const refundStatusEnum = pgEnum("refundStatus", ["Pending", "Processing", "Completed", "Failed", "Rejected"]);
+
+export const refundReasonTypeEnum = pgEnum("refundReasonType", ["EventCancelled",  "EventPostponed",  "MaterialChange",  "Other",]);
+
+export const ticketLifecycleStatusEnum = pgEnum("ticket_lifecycle_status", ["Valid","Refunded","Cancelled",]);
 
 // =======================
 // USERS
@@ -264,6 +271,7 @@ export const wallets = pgTable("wallets", {
   balance: decimal("balance", { precision: 12, scale: 2 }).notNull().default("0.00"),
   pendingBalance: decimal("pendingBalance", { precision: 12, scale: 2 }).notNull().default("0.00"),
   totalEarned: decimal("totalEarned", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  totalRefunded: decimal("totalRefunded", { precision: 12, scale: 2 }).notNull().default("0.00"),
   currency: varchar("currency", { length: 10 }).notNull().default("KES"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -289,12 +297,17 @@ export const payouts = pgTable("payouts", {
   transactionReference: varchar("transactionReference", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  methodId: integer("methodId"),                                  // which saved method was used
+reference: varchar("reference", { length: 100 }).unique(),      // our idempotency key, sent to Paystack
+transferCode: varchar("transferCode", { length: 100 }),         // optional; code currently goes in transactionReference
+failureReason: text("failureReason"),
 }, (table) => {
   return {
     orgIdx: index("payout_org_idx").on(table.orgId),
     walletIdx: index("payout_wallet_idx").on(table.walletId),
   };
 });
+
 
 // =======================
 // SAAS: SAVED PAYOUT METHODS
@@ -308,6 +321,8 @@ export const organizerPayoutMethods = pgTable("organizer_payout_methods", {
   accountType: varchar("accountType", { length: 50 }).notNull(),
   isDefault: boolean("isDefault").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  bankCode: varchar("bankCode", { length: 20 }),                  // needed for bank accounts
+  recipientCode: varchar("recipientCode", { length: 100 })
 }, (table) => {
   return {
     orgIdx: index("payout_method_org_idx").on(table.orgId),
@@ -631,19 +646,30 @@ export const payments = pgTable("payments", {
   paymentId: serial("paymentId").primaryKey(),
   orgId: integer("orgId").references(() => organizations.orgId, { onDelete: "cascade" }),
   bookingId: integer("bookingId").references(() => bookings.bookingId, { onDelete: "cascade" }),
-  
+
   // Optional digitalId to support frictionless guest checkouts
   digitalId: integer("digitalId").references(() => users.digitalId, { onDelete: "set null" }),
-  
+
+  // ---- Money ----
+  // amount          = ticket total (what the organizer's tickets cost)
+  // platformFee     = platform commission taken from the organizer
+  // netAmount       = amount - platformFee (credited to the organizer wallet)
+  // serviceFee      = buyer service fee, paid on top of the tickets (admin-configurable, ~2.5%)
+  // totalCharged    = amount + serviceFee (what the buyer actually pays via M-Pesa/Stripe)
+  // Platform revenue per sale = platformFee + serviceFee
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   platformFee: decimal("platformFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
   netAmount: decimal("netAmount", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  serviceFee: decimal("serviceFee", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  serviceFeePercent: decimal("serviceFeePercent", { precision: 5, scale: 2 }), // rate used at purchase time
+  totalCharged: decimal("totalCharged", { precision: 10, scale: 2 }).notNull().default("0.00"),
+
   paymentStatus: paymentStatusEnum("paymentStatus").default("Pending").notNull(),
   paymentDate: timestamp("paymentDate").defaultNow().notNull(),
-  
+
   // paymentMethod can store "mpesa" or "stripe"
-  paymentMethod: varchar("paymentMethod", { length: 100 }), 
-  
+  paymentMethod: varchar("paymentMethod", { length: 100 }),
+
   // General transaction identifier (e.g., M-Pesa Receipt Number or Stripe Charge ID)
   transactionId: varchar("transactionId", { length: 255 }).unique(),
 
@@ -668,6 +694,13 @@ export const payments = pgTable("payments", {
   };
 });
 
+export const platformSettings = pgTable("platform_settings", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  value: varchar("value", { length: 255 }).notNull(),
+  updatedBy: integer("updatedBy"),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
 // =======================
 // REFUNDS
 // =======================
@@ -683,10 +716,24 @@ export const refunds = pgTable("refunds", {
   transactionReference: varchar("transactionReference", { length: 255 }),
   processedAt: timestamp("processedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  // ---- Refund details (added) ----
+  orgId: integer("orgId").references(() => organizations.orgId, { onDelete: "set null" }),
+  reasonType: refundReasonTypeEnum("reasonType").default("Other").notNull(),
+  ticketIds: jsonb("ticketIds").$type<number[]>(), // null = whole booking
+  ticketAmount: decimal("ticketAmount", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  serviceFeeAmount: decimal("serviceFeeAmount", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  failureReason: text("failureReason"),
+  approvedBy: integer("approvedBy").references(() => users.digitalId, { onDelete: "set null" }),
+  approvedAt: timestamp("approvedAt"),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }).unique(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  organizerDebit: decimal("organizerDebit", { precision: 10, scale: 2 }).notNull().default("0.00"),
 }, (table) => {
   return {
     paymentIdx: index("refund_payment_idx").on(table.paymentId),
     bookingIdx: index("refund_booking_idx").on(table.bookingId),
+    orgIdx: index("refund_org_idx").on(table.orgId),
+    statusIdx: index("refund_status_idx").on(table.status),
   };
 });
 
@@ -745,6 +792,9 @@ export const tickets = pgTable("tickets", {
   // Gate scanning status
   isScanned: boolean("isScanned").default(false).notNull(),
   scannedAt: timestamp("scannedAt"),
+  // Refund / cancellation lifecycle (added)
+  lifecycleStatus: ticketLifecycleStatusEnum("lifecycleStatus").default("Valid").notNull(),
+  refundedAt: timestamp("refundedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => {
@@ -1019,6 +1069,10 @@ export const refundsRelations = relations(refunds, ({ one }) => ({
   initiator: one(users, {
     fields: [refunds.initiatedBy],
     references: [users.digitalId],
+  }),
+  organization: one(organizations, {
+    fields: [refunds.orgId],
+    references: [organizations.orgId],
   }),
 }));
 

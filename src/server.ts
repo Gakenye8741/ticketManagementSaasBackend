@@ -34,6 +34,7 @@ import verificationRouter from './services/verification/verification.routes';
 import supportTicketsRouter from './services/Supportticketservices/Supporttickets.route';
 import paystackRouter from './services/payments/Mpesa/Paystack.route';
 import { paystackWebhookHandler } from './services/payments/Mpesa/Paystack.controller';
+import refundRouter from './services/payments/Refunds/Refunds.routes';
 
 dotenv.config();
 
@@ -155,6 +156,7 @@ const apiRoutes = [
   { path: '/api', router: sendTicketEmailRoute },
   { path: '/api/payments', router: paystackRouter},
   { path: '/api', router: walletRouter },
+  { path: '/api/refunds', router: refundRouter },
   { path: '/api/support', router: supportTicketsRouter },
 ];
 

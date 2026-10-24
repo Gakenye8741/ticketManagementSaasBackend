@@ -32,12 +32,13 @@ Content-Type: application/json
   "otp": "786745"
 }
 
+
 ### 3. Login User
 POST {{baseUrl}}/login
 Content-Type: application/json
 
 {
-  "email": "{{organizerEmail}}",
+  "email": "{{adminEmail}}",
   "password": "Gakenye123#"
 }
 

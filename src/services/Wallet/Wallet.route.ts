@@ -3,8 +3,7 @@ import {
   adminAuth,
   organizerAuth,
   adminOrOrganizerAuth,
-} from "../../middleware/bearAuth"; // Adjust path to your auth middleware file as needed
-
+} from "../../middleware/bearAuth";
 import {
   getOrCreateWalletController,
   getWalletByOrgIdController,
@@ -16,6 +15,9 @@ import {
   getPayoutByIdController,
   updatePayoutStatusController,
   getPendingPayoutsController,
+  sendPayoutController,
+  reconcilePayoutController,
+  bulkSendPayoutsController,
   addPayoutMethodController,
   getOrganizationPayoutMethodsController,
   getPayoutMethodByIdController,
@@ -32,54 +34,68 @@ import {
   getTotalPlatformPendingLiabilityController,
   walletExistsController,
   getPayoutCountController,
-  bulkUpdatePayoutStatusController,
   getLatestPayoutController,
   validateMethodOwnershipController,
   getWalletOverviewController,
+  getBanksController,
 } from "./Wallet.controller";
+import { enforceOrgParam, forceOrgFromToken } from "../../middleware/Orgaccess";
 
 const walletRouter = Router();
 
 // ==========================================
-// WALLET ROUTES (Secured with Auth)
+// WALLET ROUTES
 // ==========================================
-walletRouter.post("/wallets", adminOrOrganizerAuth, getOrCreateWalletController);
-walletRouter.get("/wallets/:orgId", adminOrOrganizerAuth, getWalletByOrgIdController);
+walletRouter.post("/wallets", adminOrOrganizerAuth, forceOrgFromToken, getOrCreateWalletController);
 walletRouter.post("/wallets/credit", adminAuth, creditWalletController);
 walletRouter.post("/wallets/debit", adminAuth, debitWalletController);
-walletRouter.get("/wallets/:orgId/stats", adminOrOrganizerAuth, getWalletStatsController);
-walletRouter.get("/wallets/:orgId/overview", adminOrOrganizerAuth, getWalletOverviewController);
-walletRouter.get("/wallets/:orgId/exists", adminOrOrganizerAuth, walletExistsController);
-walletRouter.get("/wallets/:orgId/balance-check", adminOrOrganizerAuth, hasSufficientBalanceController);
+walletRouter.get("/wallets/:orgId", adminOrOrganizerAuth, enforceOrgParam, getWalletByOrgIdController);
+walletRouter.get("/wallets/:orgId/stats", adminOrOrganizerAuth, enforceOrgParam, getWalletStatsController);
+walletRouter.get("/wallets/:orgId/overview", adminOrOrganizerAuth, enforceOrgParam, getWalletOverviewController);
+walletRouter.get("/wallets/:orgId/exists", adminOrOrganizerAuth, enforceOrgParam, walletExistsController);
+walletRouter.get("/wallets/:orgId/balance-check", adminOrOrganizerAuth, enforceOrgParam, hasSufficientBalanceController);
 walletRouter.post("/wallets/:orgId/clear-pending", adminAuth, clearPendingBalanceController);
 walletRouter.post("/wallets/:orgId/reset", adminAuth, resetWalletController);
 walletRouter.get("/platform/pending-liability", adminAuth, getTotalPlatformPendingLiabilityController);
 
 // ==========================================
-// PAYOUT ROUTES (Secured with Auth)
+// PAYOUT ROUTES
 // ==========================================
-walletRouter.post("/payouts", organizerAuth, requestPayoutController);
+// Organizer
+walletRouter.post("/payouts", organizerAuth, forceOrgFromToken, requestPayoutController);
+
+// Admin (static paths first so they are not swallowed by /payouts/:payoutId)
 walletRouter.get("/payouts/pending", adminAuth, getPendingPayoutsController);
-walletRouter.patch("/payouts/bulk-status", adminAuth, bulkUpdatePayoutStatusController);
-walletRouter.get("/payouts/org/:orgId", adminOrOrganizerAuth, getOrganizationPayoutsController);
-walletRouter.get("/payouts/org/:orgId/latest", adminOrOrganizerAuth, getLatestPayoutController);
-walletRouter.get("/payouts/org/:orgId/count", adminOrOrganizerAuth, getPayoutCountController);
-walletRouter.get("/payouts/org/:orgId/total-paid", adminOrOrganizerAuth, getTotalPaidOutController);
-walletRouter.get("/payouts/org/:orgId/status/:status", adminOrOrganizerAuth, getPayoutsByStatusController);
+walletRouter.post("/payouts/bulk-send", adminAuth, bulkSendPayoutsController); // replaces PATCH /payouts/bulk-status
+
+// Organizer or admin, scoped to their own org
+walletRouter.get("/payouts/org/:orgId", adminOrOrganizerAuth, enforceOrgParam, getOrganizationPayoutsController);
+walletRouter.get("/payouts/org/:orgId/latest", adminOrOrganizerAuth, enforceOrgParam, getLatestPayoutController);
+walletRouter.get("/payouts/org/:orgId/count", adminOrOrganizerAuth, enforceOrgParam, getPayoutCountController);
+walletRouter.get("/payouts/org/:orgId/total-paid", adminOrOrganizerAuth, enforceOrgParam, getTotalPaidOutController);
+walletRouter.get("/payouts/org/:orgId/status/:status", adminOrOrganizerAuth, enforceOrgParam, getPayoutsByStatusController);
+
+// By payout ID (the controller checks the payout belongs to the caller's org)
 walletRouter.get("/payouts/:payoutId", adminOrOrganizerAuth, getPayoutByIdController);
-walletRouter.patch("/payouts/:payoutId/status", adminAuth, updatePayoutStatusController);
+
+// Admin actions on one payout
+walletRouter.post("/payouts/:payoutId/send", adminAuth, sendPayoutController);
+walletRouter.post("/payouts/:payoutId/reconcile", adminAuth, reconcilePayoutController);
+walletRouter.patch("/payouts/:payoutId/status", adminAuth, updatePayoutStatusController); // manual override, Pending only
 
 // ==========================================
-// PAYOUT METHODS ROUTES (Secured with Auth)
+// PAYOUT METHODS ROUTES
 // ==========================================
-walletRouter.post("/payout-methods", organizerAuth, addPayoutMethodController);
-walletRouter.get("/payout-methods/org/:orgId", adminOrOrganizerAuth, getOrganizationPayoutMethodsController);
-walletRouter.get("/payout-methods/org/:orgId/default", adminOrOrganizerAuth, getDefaultPayoutMethodController);
-walletRouter.get("/payout-methods/org/:orgId/count", adminOrOrganizerAuth, countPayoutMethodsController);
-walletRouter.get("/payout-methods/:methodId", adminOrOrganizerAuth, getPayoutMethodByIdController);
-walletRouter.patch("/payout-methods/:methodId/default", organizerAuth, setDefaultPayoutMethodController);
-walletRouter.patch("/payout-methods/:methodId", organizerAuth, updatePayoutMethodController);
-walletRouter.delete("/payout-methods/:methodId", organizerAuth, deletePayoutMethodController);
-walletRouter.get("/payout-methods/:methodId/validate/:orgId", adminOrOrganizerAuth, validateMethodOwnershipController);
+walletRouter.post("/payout-methods", organizerAuth, forceOrgFromToken, addPayoutMethodController);
+walletRouter.get("/payout-methods/org/:orgId", adminOrOrganizerAuth, enforceOrgParam, getOrganizationPayoutMethodsController);
+walletRouter.get("/payout-methods/org/:orgId/default", adminOrOrganizerAuth, enforceOrgParam, getDefaultPayoutMethodController);
+walletRouter.get("/payout-methods/org/:orgId/count", adminOrOrganizerAuth, enforceOrgParam, countPayoutMethodsController);
+walletRouter.get("/payout-methods/:methodId/validate/:orgId", adminOrOrganizerAuth, enforceOrgParam, validateMethodOwnershipController);
+walletRouter.get("/payout-methods/:methodId", adminOrOrganizerAuth, getPayoutMethodByIdController); // controller checks ownership
+walletRouter.patch("/payout-methods/:methodId/default", organizerAuth, forceOrgFromToken, setDefaultPayoutMethodController);
+walletRouter.patch("/payout-methods/:methodId", organizerAuth, forceOrgFromToken, updatePayoutMethodController);
+walletRouter.delete("/payout-methods/:methodId", organizerAuth, forceOrgFromToken, deletePayoutMethodController);
 
+walletRouter.get("/banks", adminOrOrganizerAuth, getBanksController);
+walletRouter.get("/payout-methods/banks", adminOrOrganizerAuth, getBanksController);
 export default walletRouter;

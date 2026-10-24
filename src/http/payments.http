@@ -1,19 +1,102 @@
 @baseUrl = http://localhost:5000/api/payments
 @bookingId = 48
 @orgId = 1
+# Paste a real admin JWT here (needed for the admin-only routes)
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjgyMTEwMDM5OSwiZGlnaXRhbElkIjo4MjExMDAzOTksIm9yZ0lkIjpudWxsLCJlbWFpbCI6ImNvZGV3aXRoZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoiYWRtaW4iLCJmaXJzdE5hbWUiOiJhZG1pbiIsImlhdCI6MTc5MjI2NjU2MCwiZXhwIjoxNzk3NDUwNTYwfQ.zG6IVIRhMjzhxZvfs9ZlHtMRrOQFNvJDxGaLnISN-hA
 
 ### ==========================================
-### 🚀 GATEWAY, HEALTH & WEBHOOK ROUTES
+### 🧾 SERVICE FEE: RUN THESE IN ORDER (A → H)
 ### ==========================================
 
-### 1. Health Check
-GET {{baseUrl}}/health
+### A. Read the current service fee (admin)
+GET {{baseUrl}}/settings/service-fee
+Authorization: Bearer {{adminToken}}
 
-### 2. Check Booking Payment Status (Updated to /booking-status)
+### B. Set the service fee to 2.5% (creates the setting if it doesn't exist yet, otherwise updates it)
+PUT {{baseUrl}}/settings/service-fee
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "percent": 1.5,
+  "flat": 0
+}
+
+### C. Buyer checkout totals, M-Pesa (total is rounded up to whole shillings)
+GET {{baseUrl}}/checkout-totals?bookingId={{bookingId}}&method=mpesa
+
+### D. Buyer checkout totals, card (exact cents, no rounding)
+GET {{baseUrl}}/checkout-totals?bookingId={{bookingId}}&method=card
+
+### E. Create a payment and check the response has serviceFee, serviceFeePercent and totalCharged
+###    (amount is left out on purpose, so it is read from the booking)
+POST {{baseUrl}}
+Content-Type: application/json
+
+{
+  "bookingId": {{bookingId}},
+  "paymentMethod": "M-Pesa",
+  "paymentStatus": "Completed",
+  "transactionId": "SVC-TEST-001",
+  "orgId": {{orgId}}
+}
+
+### F. Change the fee to 3% + 10 flat, then re-run C: the totals should change with NO code change
+PUT {{baseUrl}}/settings/service-fee
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "percent": 3,
+  "flat": 10
+}
+
+### G. Validation tests: both of these should return 400
+### G1. Percent too high
+PUT {{baseUrl}}/settings/service-fee
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "percent": 80,
+  "flat": 0
+}
+
+### G2. Negative flat fee
+PUT {{baseUrl}}/settings/service-fee
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "percent": 2.5,
+  "flat": -5
+}
+
+### H. Set it back to 2.5% when you're done testing
+PUT {{baseUrl}}/settings/service-fee
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "percent": 2.5,
+  "flat": 0
+}
+
+### Missing / unknown bookingId should return 400 / 404
+GET {{baseUrl}}/checkout-totals
+
+###
+GET {{baseUrl}}/checkout-totals?bookingId=999999&method=mpesa
+
+### ==========================================
+### 🚀 PAYSTACK GATEWAY & STATUS ROUTES
+### ==========================================
+
+### 1. Check Booking Payment Status
 GET {{baseUrl}}/booking-status/{{bookingId}}
 
-### 3. Initiate M-Pesa STK Push
-POST {{baseUrl}}/stk-push
+### 2. Paystack: direct M-Pesa prompt (body fields are a guess, match your handlePaystackMpesa)
+POST {{baseUrl}}/paystack/mpesa
 Content-Type: application/json
 
 {
@@ -21,43 +104,50 @@ Content-Type: application/json
   "bookingId": {{bookingId}}
 }
 
-### 4. Create Stripe Checkout Session
-POST {{baseUrl}}/stripe/create-checkout-session
+### 3. Paystack: hosted checkout (body fields are a guess, match your initializePaystackPayment)
+POST {{baseUrl}}/paystack/initialize
 Content-Type: application/json
 
 {
-  "bookingId": 1,
-  "amount": 1000,
-  "eventName": "Tech Summit 2026",
-  "ticketTypeName": "Regular Advance",
-  "quantity": 1
+  "bookingId": {{bookingId}},
+  "email": "buyer@example.com"
 }
 
-###
-curl http://localhost:5000/api/payments/paystack/verify/TS-122-1792009610531
+### 4. Paystack: verify a payment by reference
+GET {{baseUrl}}/paystack/verify/TS-122-1792009610531
 
 ### ==========================================
 ### 📊 ANALYTICS & STATS ROUTES
 ### ==========================================
 
-### 5. Get Platform Total Earnings
+### 5. Platform earnings: organizer commission only
 GET {{baseUrl}}/analytics/platform-earnings
 
-### 6. Get Event Total Revenue
+### 6. 🆕 Platform earnings: buyer service fees only (admin)
+GET {{baseUrl}}/analytics/service-fee-earnings
+Authorization: Bearer {{adminToken}}
+
+### 7. 🆕 Total platform revenue: commission + service fees (admin)
+GET {{baseUrl}}/analytics/total-revenue
+Authorization: Bearer {{adminToken}}
+
+### 8. Event total revenue (ticket sales only)
 GET {{baseUrl}}/analytics/event-revenue/14
 
-### 7. Get Successful Payments Count
+### 9. Successful payments count
 GET {{baseUrl}}/analytics/successful-count
 
+### 9b. Successful payments count for one organization
+GET {{baseUrl}}/analytics/successful-count?orgId={{orgId}}
 
 ### ==========================================
 ### 📋 CORE PAYMENT CRUD & FILTER ROUTES
 ### ==========================================
 
-### 8. Get All Payments
+### 10. Get All Payments
 GET {{baseUrl}}
 
-### 9. Create Manual Payment Record
+### 11. Create Manual Payment Record (explicit amount; if it is more than the booking total it is capped to the booking total)
 POST {{baseUrl}}
 Content-Type: application/json
 
@@ -67,10 +157,10 @@ Content-Type: application/json
   "paymentMethod": "M-Pesa",
   "paymentStatus": "Completed",
   "transactionId": "QWE12345",
-  "orgId":{{orgId}}
+  "orgId": {{orgId}}
 }
 
-### 9. Create Manual Payment Record (Auto-fetched from Booking)
+### 12. Create Manual Payment Record (amount auto-fetched from the booking)
 POST {{baseUrl}}
 Content-Type: application/json
 
@@ -79,13 +169,13 @@ Content-Type: application/json
   "paymentMethod": "M-Pesa",
   "paymentStatus": "Completed",
   "transactionId": "QWE1234567453",
-  "orgId":{{orgId}}
+  "orgId": {{orgId}}
 }
 
-### 10. Get Payment By ID
+### 13. Get Payment By ID
 GET {{baseUrl}}/1
 
-### 11. Update Payment Record
+### 14. Update Payment Record
 PUT {{baseUrl}}/1
 Content-Type: application/json
 
@@ -94,7 +184,7 @@ Content-Type: application/json
   "paymentMethod": "Stripe"
 }
 
-### 12. Update Payment Status (Patch)
+### 15. Update Payment Status (Patch)
 PATCH {{baseUrl}}/1/status
 Content-Type: application/json
 
@@ -105,23 +195,23 @@ Content-Type: application/json
   "resultDesc": "The service request is processed successfully."
 }
 
-### 13. Filter Payments by Booking ID
+### 16. Filter Payments by Booking ID
 GET {{baseUrl}}/booking/{{bookingId}}
 
-### 14. Filter Payments by Event ID
+### 17. Filter Payments by Event ID
 GET {{baseUrl}}/event/1
 
-### 15. Filter Payments by Organization ID
+### 18. Filter Payments by Organization ID
 GET {{baseUrl}}/org/4
 
-### 16. Filter Payments by User Digital ID
+### 19. Filter Payments by User Digital ID
 GET {{baseUrl}}/user/1
 
-### 17. Filter Payments by Status
+### 20. Filter Payments by Status
 GET {{baseUrl}}/status/Pending
 
-### 18. Filter Payments by Method
+### 21. Filter Payments by Method
 GET {{baseUrl}}/method/M-Pesa
 
-### 19. Delete Payment Record
+### 22. Delete Payment Record
 DELETE {{baseUrl}}/1

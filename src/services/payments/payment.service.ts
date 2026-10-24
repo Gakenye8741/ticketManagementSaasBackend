@@ -1,10 +1,11 @@
-import { eq, desc, and, sum, count, gte, lte, sql } from "drizzle-orm";
+import { eq, desc, and, sum, count, gte, lte, sql, inArray } from "drizzle-orm"; // 🆕 inArray
 import db from "../../drizzle/db";
 import {
   payments,
   bookings,
   wallets,
   organizations,
+  platformSettings, // 🆕 settings table (admin-configurable fees)
   TInsertPayment,
   TSelectPayment,
   paymentStatusEnum,
@@ -272,6 +273,65 @@ const creditWalletFromPayment = async (
 };
 
 // ==========================================
+// 🆕 BUYER SERVICE FEE (admin-configurable via platform_settings)
+//    Charged to the buyer ON TOP of the ticket amount, for platform maintenance.
+//    Admin changes the rate from the settings page; no code change needed.
+// ==========================================
+const DEFAULT_SERVICE_FEE_PERCENT = 2.5; // fallback if platform_settings has no value yet
+
+export const getBuyerFeeConfig = async (executor: typeof db | Tx = db) => {
+  const d = executor as typeof db;
+  const rows = await d
+    .select()
+    .from(platformSettings)
+    .where(inArray(platformSettings.key, ["buyer_service_fee_percent", "buyer_service_fee_flat"]));
+
+  const m = Object.fromEntries(rows.map((r) => [r.key, Number(r.value)]));
+  return {
+    percent: Number.isFinite(m.buyer_service_fee_percent) ? m.buyer_service_fee_percent : DEFAULT_SERVICE_FEE_PERCENT,
+    flat: Number.isFinite(m.buyer_service_fee_flat) ? m.buyer_service_fee_flat : 0,
+  };
+};
+
+const isMpesa = (method?: string | null) => /m-?pesa/i.test(String(method ?? ""));
+
+// Works in cents to avoid floating-point errors.
+// M-Pesa STK push needs a whole-shilling total, so for M-Pesa the fee is rounded up to make it whole.
+export const calcBuyerFee = (
+  ticketAmount: number | string,
+  cfg: { percent: number; flat: number },
+  wholeAmounts = false
+) => {
+  const cents = Math.round(Number(ticketAmount) * 100);
+  let fee = cents > 0 ? Math.round((cents * cfg.percent) / 100) + Math.round(cfg.flat * 100) : 0;
+  let total = cents + fee;
+
+  if (wholeAmounts && total % 100 !== 0) {
+    total = Math.ceil(total / 100) * 100;
+    fee = total - cents;
+  }
+
+  return {
+    serviceFee: (fee / 100).toFixed(2),
+    totalCharged: (total / 100).toFixed(2),
+  };
+};
+
+// Call this where you START the payment (M-Pesa STK push / Stripe PaymentIntent)
+// so the buyer is charged `totalCharged` instead of only the ticket amount.
+export const getCheckoutTotalsService = async (
+  ticketAmount: number | string,
+  paymentMethod?: string | null
+) => {
+  const cfg = await getBuyerFeeConfig();
+  return {
+    ticketAmount: Number(ticketAmount).toFixed(2),
+    ...calcBuyerFee(ticketAmount, cfg, isMpesa(paymentMethod)),
+    serviceFeePercent: cfg.percent,
+  };
+};
+
+// ==========================================
 // 13. CREATE A NEW PAYMENT & AUTO-FUND WALLET (FINAL)
 // ==========================================
 export const createPaymentService = async (input: any) => {
@@ -307,7 +367,16 @@ export const createPaymentService = async (input: any) => {
       throw new Error(`Booking with ID ${input.bookingId} not found 🚫`);
     }
 
-    const paymentAmount = Number(input.amount ?? bookingRecord.totalAmount);
+    let paymentAmount = Number(input.amount ?? bookingRecord.totalAmount);
+
+    // 🆕 Safety: the commission must be calculated on the TICKET amount only.
+    // If a caller passes the amount the buyer actually paid (tickets + service fee),
+    // cap it at the booking's ticket total so the fee is never counted as ticket revenue.
+    const bookingTotal = Number(bookingRecord.totalAmount);
+    if (Number.isFinite(bookingTotal) && bookingTotal > 0 && paymentAmount > bookingTotal) {
+      paymentAmount = bookingTotal;
+    }
+
     const organizationId = input.orgId ?? bookingRecord.event?.orgId;
 
     if (!organizationId) {
@@ -315,6 +384,14 @@ export const createPaymentService = async (input: any) => {
     }
 
     const { amount, platformFee, netAmount } = await resolveFees(tx, organizationId, paymentAmount);
+
+    // 🆕 Buyer service fee, paid on top of the ticket amount (read fresh from platform_settings)
+    const feeCfg = await getBuyerFeeConfig(tx);
+    const { serviceFee, totalCharged } = calcBuyerFee(
+      amount, // ticket total, same base as the commission
+      feeCfg,
+      isMpesa(input.paymentMethod)
+    );
 
     const [created] = await tx
       .insert(payments)
@@ -325,6 +402,9 @@ export const createPaymentService = async (input: any) => {
         amount,
         platformFee,
         netAmount,
+        serviceFee, // 🆕
+        serviceFeePercent: String(feeCfg.percent), // 🆕 rate used at purchase time
+        totalCharged, // 🆕 what the buyer paid (amount + serviceFee)
         paymentMethod: input.paymentMethod,
         paymentStatus: input.paymentStatus ?? "Completed",
         transactionId: input.transactionId,
@@ -335,7 +415,7 @@ export const createPaymentService = async (input: any) => {
       .returning();
 
     if (created.paymentStatus === "Completed") {
-      await creditWalletFromPayment(tx, created);
+      await creditWalletFromPayment(tx, created); // still credits netAmount only
     }
 
     return created;
@@ -492,6 +572,7 @@ export const getEventTotalRevenueService = async (eventId: number): Promise<numb
 
 // ==========================================
 // 20. CALCULATE PLATFORM EARNINGS (Fees)
+//     (commission only, unchanged)
 // ==========================================
 export const getPlatformTotalEarningsService = async (): Promise<number> => {
   const result = await db
@@ -516,4 +597,83 @@ export const getSuccessfulPaymentsCountService = async (orgId?: number): Promise
     );
 
   return Number(result[0]?.count || 0);
+};
+
+// ==========================================
+// 🆕 22. PLATFORM SERVICE-FEE EARNINGS (buyer fees only)
+// ==========================================
+export const getPlatformServiceFeeEarningsService = async (): Promise<number> => {
+  const result = await db
+    .select({ total: sum(payments.serviceFee) })
+    .from(payments)
+    .where(eq(payments.paymentStatus, "Completed"));
+
+  return Number(result[0]?.total || 0);
+};
+
+// ==========================================
+// 🆕 23. TOTAL PLATFORM REVENUE (organizer commission + buyer service fees)
+// ==========================================
+export const getPlatformTotalRevenueService = async (): Promise<number> => {
+  const result = await db
+    .select({
+      commission: sum(payments.platformFee),
+      serviceFees: sum(payments.serviceFee),
+    })
+    .from(payments)
+    .where(eq(payments.paymentStatus, "Completed"));
+
+  return Number(result[0]?.commission || 0) + Number(result[0]?.serviceFees || 0);
+};
+
+// ==========================================
+// 🆕 24. CHECKOUT TOTALS FOR A BOOKING (ticket + service fee, calculated server-side)
+//     The ticket amount comes from the booking in the DB, never from the client.
+// ==========================================
+export const getCheckoutTotalsByBookingService = async (
+  bookingId: number,
+  paymentMethod?: string | null
+) => {
+  const booking = await db.query.bookings.findFirst({
+    where: eq(bookings.bookingId, bookingId),
+  });
+
+  if (!booking) {
+    throw new Error(`Booking with ID ${bookingId} not found 🚫`);
+  }
+
+  const totals = await getCheckoutTotalsService(booking.totalAmount, paymentMethod);
+  return { bookingId, ...totals };
+};
+
+// ==========================================
+// 🆕 25. SERVICE FEE SETTINGS (admin can view and change without touching code)
+// ==========================================
+export const getServiceFeeSettingsService = async () => {
+  return await getBuyerFeeConfig();
+};
+
+export const updateServiceFeeSettingsService = async (
+  percent: number,
+  flat: number,
+  updatedBy?: number | null
+) => {
+  const entries = [
+    { key: "buyer_service_fee_percent", value: String(percent) },
+    { key: "buyer_service_fee_flat", value: String(flat) },
+  ];
+
+  await db.transaction(async (tx) => {
+    for (const entry of entries) {
+      await tx
+        .insert(platformSettings)
+        .values({ ...entry, updatedBy: updatedBy ?? null })
+        .onConflictDoUpdate({
+          target: platformSettings.key,
+          set: { value: entry.value, updatedBy: updatedBy ?? null, updatedAt: new Date() },
+        });
+    }
+  });
+
+  return await getBuyerFeeConfig();
 };

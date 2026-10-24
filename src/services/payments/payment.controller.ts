@@ -19,7 +19,14 @@ import {
   deletePaymentService,
   getEventTotalRevenueService,
   getPlatformTotalEarningsService,
-  getSuccessfulPaymentsCountService
+  getSuccessfulPaymentsCountService,
+  // 🆕 service fee
+  getCheckoutTotalsByBookingService,
+  getServiceFeeSettingsService,
+  updateServiceFeeSettingsService,
+  getPlatformServiceFeeEarningsService,
+  getPlatformTotalRevenueService,
+  getCheckoutTotalsService,
 } from "./payment.service";
 
 // ==========================================
@@ -227,8 +234,9 @@ export const createPayment: RequestHandler = async (req, res): Promise<void> => 
       digitalId: resolvedDigitalId !== null ? resolvedDigitalId : undefined,
     };
 
-    // Calls your updated service which automatically fetches the organization's 
-    // custom commissionPercentage, calculates platformFee & netAmount, and saves to DB.
+    // Calls your updated service which automatically:
+    //  - fetches the organization's custom commissionPercentage and calculates platformFee & netAmount
+    //  - 🆕 reads the admin-configured buyer service fee and saves serviceFee, serviceFeePercent & totalCharged
     const newPayment = await createPaymentService(payload as any);
     
     res.status(201).json({
@@ -267,11 +275,16 @@ export const updatePayment: RequestHandler = async (req, res): Promise<void> => 
       return;
     }
 
+    // 🆕 read through `any` so this compiles even if the validator doesn't list the new fields yet
+    const data: any = parseResult.data;
+
     const updatePayload = {
       ...parseResult.data,
-      amount: parseResult.data.amount !== undefined ? String(parseResult.data.amount) : undefined,
-      platformFee: parseResult.data.platformFee !== undefined ? String(parseResult.data.platformFee) : undefined,
-      netAmount: parseResult.data.netAmount !== undefined ? String(parseResult.data.netAmount) : undefined,
+      amount: data.amount !== undefined ? String(data.amount) : undefined,
+      platformFee: data.platformFee !== undefined ? String(data.platformFee) : undefined,
+      netAmount: data.netAmount !== undefined ? String(data.netAmount) : undefined,
+      serviceFee: data.serviceFee !== undefined ? String(data.serviceFee) : undefined, // 🆕
+      totalCharged: data.totalCharged !== undefined ? String(data.totalCharged) : undefined, // 🆕
     };
 
     const updatedPayment = await updatePaymentService(paymentId, updatePayload as any);
@@ -371,6 +384,7 @@ export const getEventTotalRevenue: RequestHandler = async (req, res): Promise<vo
 
 // ==========================================
 // 14. GET PLATFORM TOTAL EARNINGS
+//     (organizer commission only, unchanged)
 // ==========================================
 export const getPlatformTotalEarnings: RequestHandler = async (req, res): Promise<void> => {
   try {
@@ -401,5 +415,153 @@ export const getSuccessfulPaymentsCount: RequestHandler = async (req, res): Prom
   } catch (error: any) {
     console.error("[GET_SUCCESSFUL_PAYMENTS_COUNT_ERROR]", error);
     res.status(500).json({ success: false, error: error.message || "Failed to fetch successful payments count" });
+  }
+};
+
+// ==========================================
+// 🆕 16. GET CHECKOUT TOTALS (ticket + service fee) FOR A BOOKING
+//     Show this to the buyer before they pay. The ticket amount is read
+//     from the booking in the DB, never from the client.
+//     GET /payments/checkout-totals?bookingId=12&method=mpesa
+// ==========================================
+export const getCheckoutTotals: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    const bookingId = Number(req.query.bookingId);
+    if (!req.query.bookingId || Number.isNaN(bookingId)) {
+      res.status(400).json({ success: false, error: "Payment: A valid bookingId is required 🚫" });
+      return;
+    }
+
+    const method = typeof req.query.method === "string" ? req.query.method : undefined;
+    const totals = await getCheckoutTotalsByBookingService(bookingId, method);
+
+    res.status(200).json({
+      success: true,
+      message: "Payment: Checkout totals calculated successfully 🧾💳",
+      data: totals,
+    });
+  } catch (error: any) {
+    console.error("[GET_CHECKOUT_TOTALS_ERROR]", error);
+
+    if (error.message && error.message.includes("not found")) {
+      res.status(404).json({ success: false, error: error.message });
+      return;
+    }
+
+    res.status(500).json({ success: false, error: error.message || "Failed to calculate checkout totals" });
+  }
+};
+
+// ==========================================
+// 🆕 17. GET SERVICE FEE SETTINGS (admin)
+//     GET /payments/settings/service-fee
+// ==========================================
+export const getServiceFeeSettings: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    const settings = await getServiceFeeSettingsService();
+    res.status(200).json({
+      success: true,
+      message: "Payment: Service fee settings retrieved successfully ⚙️💳",
+      data: settings,
+    });
+  } catch (error: any) {
+    console.error("[GET_SERVICE_FEE_SETTINGS_ERROR]", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to fetch service fee settings" });
+  }
+};
+
+// ==========================================
+// 🆕 18. UPDATE SERVICE FEE SETTINGS (admin)
+//     PUT /payments/settings/service-fee   body: { "percent": 3, "flat": 0 }
+//     Takes effect on the next payment, with no code change or redeploy.
+// ==========================================
+export const updateServiceFeeSettings: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    const percent = Number(req.body?.percent);
+    const flat = req.body?.flat === undefined ? 0 : Number(req.body.flat);
+
+    // 50% cap protects against typos like 250 instead of 2.5. Change it if you need to.
+    if (!Number.isFinite(percent) || percent < 0 || percent > 50) {
+      res.status(400).json({ success: false, error: "Payment: Percentage must be a number between 0 and 50 🚫" });
+      return;
+    }
+    if (!Number.isFinite(flat) || flat < 0) {
+      res.status(400).json({ success: false, error: "Payment: Flat fee must be 0 or more 🚫" });
+      return;
+    }
+
+    const adminId = (req as any).user?.userId ?? null;
+    const settings = await updateServiceFeeSettingsService(percent, flat, adminId);
+
+    res.status(200).json({
+      success: true,
+      message: "Payment: Service fee updated. It applies to new payments from now on ✅⚙️",
+      data: settings,
+    });
+  } catch (error: any) {
+    console.error("[UPDATE_SERVICE_FEE_SETTINGS_ERROR]", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to update service fee settings" });
+  }
+};
+
+// ==========================================
+// 🆕 19. GET PLATFORM SERVICE-FEE EARNINGS (buyer fees only)
+// ==========================================
+export const getPlatformServiceFeeEarnings: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    const totalServiceFees = await getPlatformServiceFeeEarningsService();
+    res.status(200).json({
+      success: true,
+      message: "Payment: Total service fee earnings computed successfully 🧾📈",
+      totalServiceFeeEarnings: totalServiceFees,
+    });
+  } catch (error: any) {
+    console.error("[GET_SERVICE_FEE_EARNINGS_ERROR]", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to calculate service fee earnings" });
+  }
+};
+
+// ==========================================
+// 🆕 20. GET PLATFORM TOTAL REVENUE (commission + service fees)
+// ==========================================
+export const getPlatformTotalRevenue: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    const totalRevenue = await getPlatformTotalRevenueService();
+    res.status(200).json({
+      success: true,
+      message: "Payment: Total platform revenue (commission + service fees) computed successfully 🌐💰",
+      totalPlatformRevenue: totalRevenue,
+    });
+  } catch (error: any) {
+    console.error("[GET_PLATFORM_REVENUE_ERROR]", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to calculate platform revenue" });
+  }
+};
+
+// ==========================================
+// 🆕 21. SERVICE FEE PREVIEW (public, for the event page BEFORE a booking exists)
+//     GET /payments/service-fee-preview?amount=1000&method=mpesa
+//     Display only. The amount actually charged is always recalculated on the
+//     server from the booking in the database.
+// ==========================================
+export const getServiceFeePreview: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    const amount = Number(req.query.amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      res.status(400).json({ success: false, error: "Payment: A valid amount is required 🚫" });
+      return;
+    }
+
+    const method = typeof req.query.method === "string" ? req.query.method : undefined;
+    const totals = await getCheckoutTotalsService(amount, method);
+
+    res.status(200).json({
+      success: true,
+      message: "Payment: Service fee preview calculated successfully 🧾",
+      data: totals,
+    });
+  } catch (error: any) {
+    console.error("[GET_SERVICE_FEE_PREVIEW_ERROR]", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to calculate service fee preview" });
   }
 };

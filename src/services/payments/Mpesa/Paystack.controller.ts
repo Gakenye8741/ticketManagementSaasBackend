@@ -12,6 +12,7 @@ import {
   toPaystackPhone,
   fromSubunit,
 } from "./Paystack.service";
+import { handleRefundWebhook } from "../Refunds/Refund.service";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -233,6 +234,7 @@ export const verifyPaystackPayment = async (req: Request, res: Response) => {
 // ------------------------------------------------------
 // POST /paystack/webhook  -> replaces mpesa-callback
 // ------------------------------------------------------
+
 export const paystackWebhookHandler = async (req: Request, res: Response): Promise<void> => {
   try {
     const rawBody: Buffer | undefined = Buffer.isBuffer(req.body)
@@ -266,6 +268,14 @@ export const paystackWebhookHandler = async (req: Request, res: Response): Promi
     res.sendStatus(200); // acknowledge fast, process after
 
     const event = JSON.parse(rawBody.toString("utf8"));
+
+    // 🆕 Refund events have no data.reference, so handle them BEFORE the reference check below
+    if (event.event === "refund.processed" || event.event === "refund.failed") {
+      console.log(`🔍 [PAYSTACK] Verified refund event: ${event.event}`, JSON.stringify(event.data));
+      await handleRefundWebhook(event.event, event.data);
+      return;
+    }
+
     const reference: string | undefined = event.data?.reference;
     if (!reference) return;
 

@@ -1,0 +1,398 @@
+###############################################################
+# REFUNDS: endpoint tests (VS Code / Windsurf "REST Client" extension)
+# Click "Send Request" above any request.
+###############################################################
+
+# ---- EDIT THESE ----
+@baseUrl = http://localhost:5000/api
+@refunds = {{baseUrl}}/refunds
+
+# Paste real JWTs (the same value you send in the "token" cookie).
+# Don't commit this file with real tokens in it.
+@adminToken = PASTE_ADMIN_JWT_HERE
+@organizerToken = PASTE_ORGANIZER_JWT_HERE
+@userToken = PASTE_CUSTOMER_JWT_HERE
+
+# Test data from your database
+# Payment 13 = Brian's (customer 322725661) payment for booking #14: 2 valid tickets (93, 94)
+# Payment 12 = the ADMIN's payment for booking #13 (NOT Brian's, used for the 403 tests)
+# Payment 1  = booking #2, its tickets are already Refunded (used for the 409 tests)
+@orgId = 1
+@paymentId = 13
+@othersPaymentId = 12
+@refundedPaymentId = 1
+@eventId = 1
+@ticketId1 = 93
+@ticketId2 = 94
+
+
+###############################################################
+# 1. LIST
+###############################################################
+
+### Admin: all refunds
+GET {{refunds}}
+Cookie: token={{adminToken}}
+
+### Admin: only Pending refunds
+GET {{refunds}}?status=Pending
+Cookie: token={{adminToken}}
+
+### Admin: only Processing refunds (in flight at Paystack)
+GET {{refunds}}?status=Processing
+Cookie: token={{adminToken}}
+
+### Organizer: own org's refunds
+GET {{refunds}}/org/{{orgId}}
+Cookie: token={{organizerToken}}
+
+### Organizer: own org, filtered
+GET {{refunds}}/org/{{orgId}}?status=Completed
+Cookie: token={{organizerToken}}
+
+### Customer: my own refunds (no organizerDebit / Paystack ids in the response)
+GET {{refunds}}/mine
+Cookie: token={{userToken}}
+
+
+###############################################################
+# 2. REQUEST A REFUND (creates a Pending refund, moves no money)
+###############################################################
+
+### Whole booking, face value only (organizer)
+# @name createRefund
+POST {{refunds}}
+Cookie: token={{organizerToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "reason": "Customer requested refund",
+  "reasonType": "Other"
+}
+
+### Reuse the id of the refund created above in the requests below
+@refundId = 1
+
+### Partial: specific tickets only (organizer)
+POST {{refunds}}
+Cookie: token={{organizerToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "ticketIds": [{{ticketId1}}],
+  "reason": "One attendee can't make it",
+  "reasonType": "Other"
+}
+
+### Whole booking INCLUDING the buyer service fee (admin)
+POST {{refunds}}
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "includeServiceFee": true,
+  "reason": "Goodwill refund including service fee",
+  "reasonType": "Other"
+}
+
+### Request + approve in one step (sends it to Paystack right away)
+POST {{refunds}}
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "reason": "Event postponed, attendee can't make new date",
+  "reasonType": "EventPostponed",
+  "autoApprove": true
+}
+
+### Idempotency: send this twice, the second call returns the SAME refund
+POST {{refunds}}
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "idempotencyKey": "test-key-001",
+  "reason": "Idempotency test"
+}
+
+
+###############################################################
+# 2b. CUSTOMER: request a refund for their OWN payment
+#     Always created as Pending. The server fixes the options:
+#     whole booking, ticket price only, reasonType "Other", no auto-approve.
+###############################################################
+
+### Customer requests a refund -> 201, status "Pending"
+# @name myRefund
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "reason": "Customer cancelled booking #14",
+  "idempotencyKey": "booking-14-cancel"
+}
+
+### Same idempotencyKey again -> 201 and the SAME refundId (no duplicate)
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "reason": "Customer cancelled booking #14",
+  "idempotencyKey": "booking-14-cancel"
+}
+
+### Extra fields are ignored: response must still be reasonType "Other", serviceFeeAmount "0.00", status "Pending"
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "includeServiceFee": true,
+  "reasonType": "EventCancelled",
+  "autoApprove": true,
+  "ticketIds": [{{ticketId1}}],
+  "idempotencyKey": "sneaky-test-001"
+}
+
+
+###############################################################
+# 3. APPROVE / REJECT (organizer or admin)
+###############################################################
+
+### Approve: reserves tickets + wallet, then calls Paystack. Status becomes Processing
+POST {{refunds}}/{{refundId}}/approve
+Cookie: token={{organizerToken}}
+
+### Approve as admin
+POST {{refunds}}/{{refundId}}/approve
+Cookie: token={{adminToken}}
+
+### Reject a Pending refund
+POST {{refunds}}/{{refundId}}/reject
+Cookie: token={{organizerToken}}
+Content-Type: application/json
+
+{
+  "note": "Outside the refund window"
+}
+
+
+###############################################################
+# 4. RECONCILE (admin): ask Paystack for the real state of a Processing refund
+#    Use this if the webhook never arrived.
+###############################################################
+
+### Reconcile
+POST {{refunds}}/{{refundId}}/reconcile
+Cookie: token={{adminToken}}
+
+
+###############################################################
+# 5. BULK: refund everyone for a CANCELLED event
+#    The event's status must already be "cancelled".
+###############################################################
+
+### Refund all attendees (face value)
+POST {{refunds}}/event/{{eventId}}/refund-all
+Cookie: token={{organizerToken}}
+Content-Type: application/json
+
+{}
+
+### Refund all attendees including service fee
+POST {{refunds}}/event/{{eventId}}/refund-all
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "includeServiceFee": true
+}
+
+
+###############################################################
+# 6. THINGS THAT SHOULD FAIL (check the error messages)
+###############################################################
+
+### No token -> 401
+GET {{refunds}}
+
+### Organizer trying the admin-only list -> 403
+GET {{refunds}}
+Cookie: token={{organizerToken}}
+
+### Organizer asking for ANOTHER org's refunds -> 403
+GET {{refunds}}/org/999
+Cookie: token={{organizerToken}}
+
+### Missing paymentId -> 400
+POST {{refunds}}
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "reason": "no payment id"
+}
+
+### Bad reasonType -> 400
+POST {{refunds}}
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "reasonType": "BecauseISaidSo"
+}
+
+### Ticket that isn't on the booking -> 409
+POST {{refunds}}
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "ticketIds": [999999]
+}
+
+### Approve a refund that is no longer Pending -> 409 (run approve twice)
+POST {{refunds}}/{{refundId}}/approve
+Cookie: token={{adminToken}}
+
+### Refund-all on an event that is NOT cancelled -> 409
+POST {{refunds}}/event/{{eventId}}/refund-all
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{}
+
+
+###############################################################
+# 6b. CUSTOMER ROUTE: THINGS THAT SHOULD FAIL
+###############################################################
+
+### No token on POST -> 401 (a 404 here means the route isn't registered / server not restarted)
+POST {{refunds}}/mine
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}}
+}
+
+### No token on GET -> 401
+GET {{refunds}}/mine
+
+### Someone else's payment -> 403 "you can only request refunds for your own payments"
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{othersPaymentId}}
+}
+
+### Admin token on /mine is still checked as a customer -> 403 on a payment that isn't theirs
+POST {{refunds}}/mine
+Cookie: token={{adminToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}}
+}
+
+### Missing paymentId -> 400
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "reason": "no payment id"
+}
+
+### Payment that doesn't exist -> 404
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": 999999
+}
+
+### Tickets already refunded -> 409 "No valid tickets left" or "Nothing left to refund"
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{refundedPaymentId}}
+}
+
+### Second request with a DIFFERENT key while one is already Pending -> 409 "Nothing left to refund"
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}},
+  "idempotencyKey": "a-different-key-002"
+}
+
+### Event already started -> 409 "This event has already started..."
+### (replace 5 with a paymentId from a past event)
+POST {{refunds}}/mine
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": 5
+}
+
+### Customer must NOT reach the admin/organizer routes -> 403 each
+POST {{refunds}}
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "paymentId": {{paymentId}}
+}
+
+###
+GET {{refunds}}
+Cookie: token={{userToken}}
+
+###
+GET {{refunds}}/org/{{orgId}}
+Cookie: token={{userToken}}
+
+###
+POST {{refunds}}/{{refundId}}/approve
+Cookie: token={{userToken}}
+
+###
+POST {{refunds}}/{{refundId}}/reject
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{
+  "note": "customers can't do this"
+}
+
+###
+POST {{refunds}}/{{refundId}}/reconcile
+Cookie: token={{userToken}}
+
+###
+POST {{refunds}}/event/{{eventId}}/refund-all
+Cookie: token={{userToken}}
+Content-Type: application/json
+
+{}

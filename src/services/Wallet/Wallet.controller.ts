@@ -26,10 +26,13 @@ import {
   getTotalPlatformPendingLiability24,
   walletExists25,
   getPayoutCount26,
-  bulkUpdatePayoutStatus27,
   getLatestPayout28,
   validateMethodOwnership29,
   getWalletOverview30,
+  sendPayout,
+  reconcilePayout,
+  bulkSendPayouts,
+  getBanksService,
 } from "./Wallet.service";
 
 import {
@@ -40,8 +43,29 @@ import {
   updatePayoutStatusSchema,
   insertPayoutMethodSchema,
   updatePayoutMethodSchema,
-  bulkUpdatePayoutStatusSchema,
+  getBanksQuerySchema,
 } from "../../validators/wallet.validators";
+
+const PAYOUT_STATUSES = ["Pending", "Processing", "Completed", "Failed", "Reversed"] as const;
+type PayoutStatus = (typeof PAYOUT_STATUSES)[number];
+
+// ==========================================================
+// ACCESS CONTROL
+// Role checks live in Wallet.routes.ts (adminAuth / organizerAuth) and
+// middleware/orgAccess.ts (enforceOrgParam / forceOrgFromToken).
+// These helpers are the last line of defence inside the controllers.
+// ==========================================================
+
+/** Organizers always act on the org in their token. Admins may pass an orgId. */
+const resolveOrgId = (req: Request, fallback?: unknown): number => {
+  if (req.user?.role === "organizer") return Number(req.user.orgId);
+  return Number(fallback);
+};
+
+/** Can the caller see data belonging to this org? */
+const canAccessOrg = (req: Request, orgId: number): boolean =>
+  req.user?.role === "admin" ||
+  (req.user?.role === "organizer" && req.user.orgId != null && Number(req.user.orgId) === orgId);
 
 // ==========================================
 // WALLET CONTROLLERS
@@ -84,6 +108,7 @@ export const getWalletByOrgIdController = async (req: Request, res: Response) =>
   }
 };
 
+/** ADMIN ONLY */
 export const creditWalletController = async (req: Request, res: Response) => {
   try {
     const parsed = creditWalletSchema.safeParse(req.body);
@@ -102,6 +127,7 @@ export const creditWalletController = async (req: Request, res: Response) => {
   }
 };
 
+/** ADMIN ONLY */
 export const debitWalletController = async (req: Request, res: Response) => {
   try {
     const parsed = debitWalletSchema.safeParse(req.body);
@@ -175,7 +201,8 @@ export const getPayoutByIdController = async (req: Request, res: Response) => {
     const payoutId = Number(req.params.payoutId);
     const payout = await getPayoutById8(payoutId);
 
-    if (!payout) {
+    // Same 404 for "missing" and "not yours" so IDs can't be probed
+    if (!payout || !canAccessOrg(req, payout.orgId)) {
       return res.status(404).json({ success: false, message: "Payout record not found ❌" });
     }
 
@@ -189,6 +216,7 @@ export const getPayoutByIdController = async (req: Request, res: Response) => {
   }
 };
 
+/** ADMIN ONLY. Manual override for Pending payouts (e.g. paid outside Paystack, or rejecting a request). */
 export const updatePayoutStatusController = async (req: Request, res: Response) => {
   try {
     const payoutId = Number(req.params.payoutId);
@@ -208,6 +236,7 @@ export const updatePayoutStatusController = async (req: Request, res: Response) 
   }
 };
 
+/** ADMIN ONLY */
 export const getPendingPayoutsController = async (req: Request, res: Response) => {
   try {
     const pending = await getPendingPayouts10();
@@ -218,6 +247,68 @@ export const getPendingPayoutsController = async (req: Request, res: Response) =
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message || "Internal server error" });
+  }
+};
+
+/** ADMIN ONLY. Sends a Pending payout to Paystack. Final status arrives via webhook. */
+export const sendPayoutController = async (req: Request, res: Response) => {
+  try {
+    const payoutId = Number(req.params.payoutId);
+    if (!Number.isInteger(payoutId)) {
+      return res.status(400).json({ success: false, message: "Invalid payout ID" });
+    }
+
+    const payout = await sendPayout(payoutId);
+    return res.status(200).json({
+      success: true,
+      message: "Payout sent to Paystack, awaiting confirmation ⏳",
+      data: payout,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to send payout" });
+  }
+};
+
+/** ADMIN ONLY. Ask Paystack for the real state of a Processing payout. */
+export const reconcilePayoutController = async (req: Request, res: Response) => {
+  try {
+    const payoutId = Number(req.params.payoutId);
+    if (!Number.isInteger(payoutId)) {
+      return res.status(400).json({ success: false, message: "Invalid payout ID" });
+    }
+
+    const payout = await reconcilePayout(payoutId);
+    return res.status(200).json({
+      success: true,
+      message: `Payout is ${payout.status} 🔄`,
+      data: payout,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to reconcile payout" });
+  }
+};
+
+/** ADMIN ONLY. Replaces the old bulk status update. Body: { payoutIds: number[] } */
+export const bulkSendPayoutsController = async (req: Request, res: Response) => {
+  try {
+    const raw = req.body?.payoutIds;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 100) {
+      return res.status(400).json({ success: false, message: "payoutIds must be an array of 1 to 100 IDs" });
+    }
+    const payoutIds = raw.map(Number);
+    if (payoutIds.some((n) => !Number.isInteger(n))) {
+      return res.status(400).json({ success: false, message: "payoutIds must all be integers" });
+    }
+
+    const results = await bulkSendPayouts(payoutIds);
+    const okCount = results.filter((r) => r.ok).length;
+    return res.status(200).json({
+      success: true,
+      message: `Sent ${okCount} of ${results.length} payouts to Paystack ⚡`,
+      data: results,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to perform bulk send" });
   }
 };
 
@@ -262,7 +353,7 @@ export const getPayoutMethodByIdController = async (req: Request, res: Response)
     const methodId = Number(req.params.methodId);
     const method = await getPayoutMethodById13(methodId);
 
-    if (!method) {
+    if (!method || !canAccessOrg(req, method.orgId)) {
       return res.status(404).json({ success: false, message: "Payout method not found ❌" });
     }
 
@@ -279,7 +370,7 @@ export const getPayoutMethodByIdController = async (req: Request, res: Response)
 export const setDefaultPayoutMethodController = async (req: Request, res: Response) => {
   try {
     const methodId = Number(req.params.methodId);
-    const orgId = Number(req.body.orgId);
+    const orgId = resolveOrgId(req, req.body.orgId);
 
     const updated = await setDefaultPayoutMethod14(methodId, orgId);
     return res.status(200).json({
@@ -295,7 +386,8 @@ export const setDefaultPayoutMethodController = async (req: Request, res: Respon
 export const deletePayoutMethodController = async (req: Request, res: Response) => {
   try {
     const methodId = Number(req.params.methodId);
-    const orgId = Number(req.query.orgId || req.body.orgId);
+    // For organizers this is always the token's org, so ?orgId=<someone else> is ignored
+    const orgId = resolveOrgId(req, req.query.orgId || req.body?.orgId);
 
     const deleted = await deletePayoutMethod15(methodId, orgId);
     if (!deleted) {
@@ -362,7 +454,14 @@ export const updatePayoutMethodController = async (req: Request, res: Response) 
 export const getPayoutsByStatusController = async (req: Request, res: Response) => {
   try {
     const orgId = Number(req.params.orgId);
-    const status = req.params.status as "Pending" | "Completed" | "Failed";
+    const status = req.params.status as PayoutStatus;
+
+    if (!PAYOUT_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Use one of: ${PAYOUT_STATUSES.join(", ")}`,
+      });
+    }
 
     const payouts = await getPayoutsByStatus19(orgId, status);
     return res.status(200).json({
@@ -405,6 +504,7 @@ export const hasSufficientBalanceController = async (req: Request, res: Response
   }
 };
 
+/** ADMIN ONLY */
 export const clearPendingBalanceController = async (req: Request, res: Response) => {
   try {
     const orgId = Number(req.params.orgId);
@@ -419,6 +519,7 @@ export const clearPendingBalanceController = async (req: Request, res: Response)
   }
 };
 
+/** ADMIN ONLY. Consider removing in production. */
 export const resetWalletController = async (req: Request, res: Response) => {
   try {
     const orgId = Number(req.params.orgId);
@@ -433,6 +534,7 @@ export const resetWalletController = async (req: Request, res: Response) => {
   }
 };
 
+/** ADMIN ONLY */
 export const getTotalPlatformPendingLiabilityController = async (req: Request, res: Response) => {
   try {
     const liability = await getTotalPlatformPendingLiability24();
@@ -471,24 +573,6 @@ export const getPayoutCountController = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message || "Internal server error" });
-  }
-};
-
-export const bulkUpdatePayoutStatusController = async (req: Request, res: Response) => {
-  try {
-    const parsed = bulkUpdatePayoutStatusSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ success: false, message: "Validation error", errors: parsed.error.format() });
-    }
-
-    const updatedCount = await bulkUpdatePayoutStatus27(parsed.data.payoutIds, parsed.data.status);
-    return res.status(200).json({
-      success: true,
-      message: `Bulk status update completed. Successfully updated ${updatedCount} payouts ⚡`,
-      data: { updatedCount },
-    });
-  } catch (error: any) {
-    return res.status(400).json({ success: false, message: error.message || "Failed to perform bulk update" });
   }
 };
 
@@ -535,5 +619,36 @@ export const getWalletOverviewController = async (req: Request, res: Response) =
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message || "Internal server error" });
+  }
+};
+
+// Add this import at the top of your Wallet.controller.ts file if not already present:
+// import { getBanksService } from "./Wallet.service";
+// import { getBanksQuerySchema } from "../../validators/wallet.validators";
+
+export const getBanksController = async (req: Request, res: Response) => {
+  try {
+    const parsed = getBanksQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        errors: parsed.error.format(),
+      });
+    }
+
+    const { country, currency } = parsed.data;
+    const banks = await getBanksService(country, currency);
+
+    return res.status(200).json({
+      success: true,
+      message: "Banks fetched successfully 🏦",
+      data: banks,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal server error",
+    });
   }
 };
