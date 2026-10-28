@@ -294,20 +294,53 @@ export const claimTransferredTicketController = async (req: Request, res: Respon
 
 // ==========================================
 // 12. SCAN TICKET CONTROLLER
-// The service returns the full ticket row (including ticketTypeId and
-// ticketTypeName from the previous schema fix), so the scanner UI already
-// receives the ticket type without any controller change.
+// The service now enforces that the ticket belongs to the organizer's org.
+// Cross-org scans return "not_found" (404) so we never leak token existence.
 // ==========================================
-export const scanTicketController = async (req: Request, res: Response, next: NextFunction) => {
+export const scanTicketController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const validatedBody = scanTicketSchema.parse(req.body);
 
-    const result = await scanTicket(validatedBody.ticketToken);
-    if (!result.success) {
-      return res.status(400).json(result);
+    // ── 1. Authenticated user's org (from JWT / session middleware) ──
+    const user = req.user as
+      | { digitalId?: number; orgId?: number | null; role?: string }
+      | undefined;
+
+    if (!user?.orgId) {
+      return res.status(403).json({
+        success: false,
+        status: "no_org",
+        message: "Your account is not linked to an organization 🚫",
+      });
     }
 
-    return res.status(200).json(result);
+    // ── 2. Optional event scoping (from body or query) ──
+    const requestedEventId =
+      (req.body?.eventId ?? req.query?.eventId) !== undefined
+        ? Number(req.body?.eventId ?? req.query?.eventId)
+        : undefined;
+
+    // ── 3. Call the org-scoped service ──
+    const result = await scanTicket(
+      validatedBody.ticketToken,
+      user.orgId,
+      Number.isFinite(requestedEventId) ? requestedEventId : undefined
+    );
+
+    // ── 4. Map result.status → HTTP status ──
+    const httpStatus =
+      result.status === "valid"        ? 200 :
+      result.status === "duplicate"    ? 409 :
+      result.status === "refunded"     ? 400 :
+      result.status === "wrong_event"  ? 400 :
+      result.status === "not_found"    ? 404 :
+                                         400;
+
+    return res.status(httpStatus).json(result);
   } catch (error: any) {
     next(error);
   }

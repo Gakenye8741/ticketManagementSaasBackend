@@ -725,30 +725,83 @@ export const claimTransferredTicket = async (
 };
 
 // ==========================================
-// 12. SCAN TICKET AT GATE
+// 12. SCAN TICKET AT GATE (org-scoped)
 // ==========================================
-export const scanTicket = async (
-  ticketToken: string
-): Promise<{
+
+type ScanResult = {
   success: boolean;
+  status: "valid" | "duplicate" | "refunded" | "invalid" | "wrong_event" | "not_found";
   message: string;
   ticket?: TSelectTicket;
-}> => {
-  const [ticket] = await db
-    .select()
-    .from(tickets)
-    .where(eq(tickets.ticketToken, ticketToken));
+};
 
+export const scanTicket = async (
+  ticketToken: string,
+  actorOrgId: number,          // 👈 from the authenticated user's JWT
+  requestedEventId?: number    // 👈 optional, from scanner's route param
+): Promise<ScanResult> => {
+  // ── 1. Load ticket WITH its event (and event's org) ──
+  const ticket = await db.query.tickets.findFirst({
+    where: eq(tickets.ticketToken, ticketToken),
+    with: {
+      event: {
+        columns: {
+          eventId: true,
+          orgId: true,        // 👈 the org that owns this ticket's event
+          title: true,
+          date: true,
+          startDate: true,
+          time: true,
+        },
+        with: {
+          venue: {
+            columns: { venueId: true, name: true, address: true },
+          },
+        },
+      },
+    },
+  });
+
+  // ── 2. Not found → 404-style ──
   if (!ticket) {
     return {
       success: false,
+      status: "not_found",
       message: "Ticket token not found or invalid ❌",
     };
   }
 
+  // ── 3. Cross-org scan → pretend it doesn't exist ──
+  // Returning "not_found" (not "forbidden") prevents org A from probing
+  // whether a token exists in org B.
+  const ticketOrgId = ticket.event?.orgId;
+  if (ticketOrgId !== actorOrgId) {
+    console.warn(
+      `🚨 Cross-org scan blocked: ticket ${ticket.ticketId} ` +
+        `belongs to org ${ticketOrgId}, scanned by org ${actorOrgId}`
+    );
+    return {
+      success: false,
+      status: "not_found",
+      message: "Ticket token not found or invalid ❌",
+    };
+  }
+
+  // ── 4. Wrong event within the same org ──
+  if (requestedEventId && ticket.eventId !== requestedEventId) {
+    return {
+      success: false,
+      status: "wrong_event",
+      message: "This ticket is for a different event ⚠️",
+      ticket,
+    };
+  }
+
+  // ── 5. Refunded / non-valid ──
   if (ticket.lifecycleStatus !== "Valid") {
     return {
       success: false,
+      status: ticket.lifecycleStatus === "Refunded" ? "refunded" : "invalid",
       message:
         ticket.lifecycleStatus === "Refunded"
           ? "This ticket was refunded and is no longer valid 🚫"
@@ -757,9 +810,11 @@ export const scanTicket = async (
     };
   }
 
+  // ── 6. Duplicate scan ──
   if (ticket.isScanned) {
     return {
       success: false,
+      status: "duplicate",
       message: `Ticket already scanned at gate on ${
         ticket.scannedAt?.toLocaleString() || "previous check-in"
       } ⚠️`,
@@ -767,6 +822,7 @@ export const scanTicket = async (
     };
   }
 
+  // ── 7. Mark scanned (race-safe update) ──
   const [scannedTicket] = await db
     .update(tickets)
     .set({
@@ -784,19 +840,29 @@ export const scanTicket = async (
     .returning();
 
   if (!scannedTicket) {
+    // Another device scanned it between our SELECT and UPDATE
     return {
       success: false,
-      message: "Ticket could not be checked in (just scanned or refunded) ⚠️",
+      status: "duplicate",
+      message: "Ticket was just scanned by another device ⚠️",
+      ticket,
     };
   }
 
+  // ── 8. Return PRE-MARK snapshot so the client shows "valid" ──
+  // We send back the state before the update so the app can distinguish
+  // "just scanned" from "already scanned".
   return {
     success: true,
+    status: "valid",
     message: "Ticket verified and checked in successfully ✅🎫",
-    ticket: scannedTicket,
+    ticket: {
+      ...ticket,
+      isScanned: false,
+      scannedAt: null,
+    },
   };
 };
-
 // ==========================================
 // 13. UNASSIGN TICKET
 // ==========================================
