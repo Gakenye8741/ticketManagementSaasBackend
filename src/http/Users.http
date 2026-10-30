@@ -1,5 +1,5 @@
-@baseUrl = http://localhost:5000/api
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc0ODk2ODEzNiwiZGlnaXRhbElkIjo3NDg5NjgxMzYsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IlByb2dyYW1tZXIiLCJpYXQiOjE3ODk2Njc1MjksImV4cCI6MTc5NDg1MTUyOX0.fgeHzpfQkAJDasX6_ceJzbw6C5JlT0xqiSoENh7wnZ8
+@baseUrl=https://ticket-api.gakenye-ndiritu.co.ke/api
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjM4MzMxMDA1OSwiZGlnaXRhbElkIjozODMzMTAwNTksIm9yZ0lkIjpudWxsLCJlbWFpbCI6ImNvZGV3aXRoZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoiYWRtaW4iLCJmaXJzdE5hbWUiOiJhZG1pbiIsImlhdCI6MTc5MzIxNzM0OCwiZXhwIjoxNzk4NDAxMzQ4fQ.UqH2Bb8LHkwRXRisheL_xNqq88hxwn09NHk2ZVEX6g0
 @userId =  1
 ### 0. Login (Use this to get your session cookie/token)
 POST {{baseUrl}}/auth/login
