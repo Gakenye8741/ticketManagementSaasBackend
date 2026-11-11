@@ -1,5 +1,5 @@
 @baseUrl = http://localhost:5000
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc0ODk2ODEzNiwiZGlnaXRhbElkIjo3NDg5NjgxMzYsImVtYWlsIjoiY29kZXdpdGhnYWtlbnllQGdtYWlsLmNvbSIsInJvbGUiOiJhZG1pbiIsImZpcnN0TmFtZSI6IlByb2dyYW1tZXIiLCJpYXQiOjE3ODk4MzA1MjEsImV4cCI6MTc5NTAxNDUyMX0.uB7tmlEY5ApxmgTPcOVLo6uuzoJ_PjOV6y8mzOthwzA
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjc5NTcwMjk1OSwiZGlnaXRhbElkIjo3OTU3MDI5NTksIm9yZ0lkIjoxLCJlbWFpbCI6InByb2dyYW1taW5nZ2FrZW55ZUBnbWFpbC5jb20iLCJyb2xlIjoib3JnYW5pemVyIiwiZmlyc3ROYW1lIjoiT3JnYW5pemVyIiwiaWF0IjoxNzk0MjU1ODEyLCJleHAiOjE3OTk0Mzk4MTJ9.xClruZQ-DrstucQa3CNN95Lumw-IXHeXclDJhSeBHuM
 
 @bookingId = 37
 @ticketId = 5
@@ -19,6 +19,10 @@ Cookie: token={{token}}
 
 ### 2. Get Ticket by ID
 GET {{baseUrl}}/api/tickets/{{ticketId}}
+Cookie: token={{token}}
+
+###
+GET http://localhost:5000/api/tickets/event/1/scanner-manifest
 Cookie: token={{token}}
 
 ### 3. Get Ticket by Token

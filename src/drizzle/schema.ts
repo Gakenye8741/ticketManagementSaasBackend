@@ -826,6 +826,7 @@ export const scannerLogs = pgTable("scanner_logs", {
   gateName: varchar("gateName", { length: 100 }).notNull().default("Main Gate"),
   scanStatus: varchar("scanStatus", { length: 50 }).notNull(),
   deviceInfo: varchar("deviceInfo", { length: 255 }),
+  clientScanId: varchar("clientScanId", { length: 64 }).unique(),
   scannedAt: timestamp("scannedAt").defaultNow().notNull(),
 }, (table) => {
   return {
